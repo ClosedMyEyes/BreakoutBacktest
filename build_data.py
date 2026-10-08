@@ -137,15 +137,28 @@ def sanity_checks(prices, symbols_df, market):
     for sym, m in sorted(gaps, key=lambda x: -x[1])[:10]:
         print(f"  {sym}: {m} missing")
 
-    # Split spot-checks: biggest day-over-day jumps in unadjusted/adjusted ratio
+    # Adjustment spot-checks: days the unadjusted/adjusted ratio moves a lot. That
+    # is a split, reverse split or other capital event. The printed price jumps;
+    # the adjusted close should not.
+    by_sym = prices.groupby("symbol", observed=True)
     ratio = prices["unadj_close"] / prices["close"]
     jump = ratio / ratio.groupby(prices["symbol"], observed=True).shift(1)
-    cand = prices.loc[(jump > 1.4) | (jump < 0.7), ["symbol", "date"]].head(10)
-    print("\nSplit days to spot-check on TradingView (adjusted series should be smooth):")
-    print(cand.to_string(index=False) if len(cand) else "  none found")
+    adj_chg = prices["close"] / by_sym["close"].shift(1) - 1
+    unadj_chg = prices["unadj_close"] / by_sym["unadj_close"].shift(1) - 1
+    flag = (jump > 1.4) | (jump < 0.7)
+    cand = pd.DataFrame({
+        "symbol": prices["symbol"].astype(str), "date": prices["date"].dt.date,
+        "printed_chg%": (unadj_chg * 100).round(1), "adjusted_chg%": (adj_chg * 100).round(1),
+    })[flag]
+    cand["looks"] = ["CHECK: adjusted jumps" if abs(a) > 25 else "ok: adjusted smooth"
+                     for a in cand["adjusted_chg%"]]
+    cand = cand.reindex(cand["adjusted_chg%"].abs().sort_values(ascending=False).index)
+    print(f"\nSplit / adjustment days: {len(cand)}  (printed price jumps, adjusted close should not)")
+    print(cand.head(10).to_string(index=False) if len(cand) else "  none found")
+    print("  Look at one with: python show_data.py SYMBOL")
 
     print("\nAlso check by hand: known 2008-era bankruptcies (e.g. Lehman, Washington Mutual)")
-    print("are present with their final prices: look them up in symbols.parquet.")
+    print("are present with their final prices: python show_data.py --find lehman")
 
 
 if __name__ == "__main__":

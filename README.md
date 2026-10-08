@@ -40,6 +40,8 @@ python build_data.py --list-subtypes     # trial week 1: check which security su
                                          # then set COMMON_STOCK_SUBTYPES in config.py
 python build_data.py --limit 200         # quick end-to-end check
 python build_data.py                     # full pull (prints the Phase 1 sanity checks)
+python show_data.py ABPO                 # look at one stock's raw bars and adjustment days
+python show_data.py --find lehman        # search names; --delisted lists every delisted stock
 python build_features.py                 # Phase 2
 python check_features.py --random 5      # compare against TradingView (Phase 2 done-when)
 python make_split.py                     # Phase 3, once; commit split.csv
@@ -77,6 +79,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `setup_trend.py` | Modes B and C |
 | `grid.py` | Your grid runner, extended: windows, walk-forward report, holdout lock, research log |
 | `research_log.py` | Research log (plan 3.8) |
+| `show_data.py` | Raw-data lookups: one stock's bars and adjustment days, name search, delisted list |
 | `check_features.py` | Hand checks against TradingView |
 
 ## Guard rails built in
