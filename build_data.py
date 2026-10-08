@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 import config
-from data_sources import NorgateSource, SyntheticSource
+from data_sources import NorgateSource, SkipSymbol, SyntheticSource
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--source",  choices=["norgate", "synthetic"], default="norgate")
@@ -61,7 +61,10 @@ def main():
     def fetch(sym):
         if not src.is_common_stock(sym):
             return sym, None, "not common stock"
-        p = src.symbol_prices(sym)
+        try:
+            p = src.symbol_prices(sym)
+        except SkipSymbol as e:
+            return sym, None, str(e)
         if p is None or len(p) == 0:
             return sym, None, "no prices"
         return sym, p, None
@@ -123,13 +126,14 @@ def sanity_checks(prices, symbols_df, market):
     # Missing trading days: compare each symbol's dates against the market calendar
     cal = pd.DatetimeIndex(sorted(market["date"]))
     gaps = []
-    for sym, g in prices.groupby("symbol", observed=True):
+    for sym, g in prices[prices["listed"] == 1].groupby("symbol", observed=True):
         d = pd.DatetimeIndex(g["date"])
         expected = cal[(cal >= d[0]) & (cal <= d[-1])]
         missing = len(expected) - len(d)
         if missing > 5:
             gaps.append((sym, missing))
-    print(f"Symbols missing more than 5 trading days inside their life: {len(gaps)}")
+    print(f"Symbols missing more than 5 trading days while listed: {len(gaps)}"
+          f"  (thinly traded stocks have no bar on days with no trades)")
     for sym, m in sorted(gaps, key=lambda x: -x[1])[:10]:
         print(f"  {sym}: {m} missing")
 

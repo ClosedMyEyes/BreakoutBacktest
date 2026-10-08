@@ -187,15 +187,16 @@ def build_ranks(prices_tbl, feat_path):
                                               "ret252", "dv50"]).to_pandas()
     date = prices_tbl.column("date").to_pandas()
     unadj = prices_tbl.column("unadj_close").to_pandas()
-    eligible = unadj >= config.RS_RANK_MIN_PRICE
+    listed = prices_tbl.column("listed").to_pandas() == 1
+    eligible = (unadj >= config.RS_RANK_MIN_PRICE) & listed
 
     ranks = pd.DataFrame(index=feats.index)
     ranks["rs_rank"]     = pct_rank_1_99(feats["rs_score_w"],   date, eligible & feats["rs_score_w"].notna())
     ranks["rs_rank_ibd"] = pct_rank_1_99(feats["rs_score_ibd"], date, eligible & feats["rs_score_ibd"].notna())
     ranks["rs_rank_252"] = pct_rank_1_99(feats["ret252"],       date, eligible & feats["ret252"].notna())
     ranks["rs_rank_126"] = pct_rank_1_99(feats["ret126"],       date, eligible & feats["ret126"].notna())
-    # Dollar-volume percentile 0-100 across every stock trading that day
-    ranks["dv_pct"] = (feats["dv50"].groupby(date).rank(pct=True) * 100).astype(F32)
+    # Dollar-volume percentile 0-100 across every listed stock trading that day
+    ranks["dv_pct"] = (feats["dv50"].where(listed).groupby(date).rank(pct=True) * 100).astype(F32)
     return ranks
 
 

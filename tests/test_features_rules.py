@@ -98,3 +98,9 @@ def test_holdout_is_locked():
         datastore.check_universe("all", unlock_holdout=False)
     datastore.check_universe("holdout", unlock_holdout=True)
     datastore.check_universe("dev", unlock_holdout=False)
+
+
+def test_universe_needs_major_exchange_listing():
+    df = pd.DataFrame({"unadj_close": [20.0, 20.0, 3.0], "dv_pct": [90.0, 90.0, 90.0],
+                       "listed": [1, 0, 1]})
+    assert rules.universe_mask(df, {}).tolist() == [True, False, False]

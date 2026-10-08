@@ -62,7 +62,7 @@ INDEX_MEMBERSHIP = {            # column name -> Norgate index name
 
 MARKET_SYMBOLS = {              # column prefix -> Norgate symbol
     "spx":  "$SPX",
-    "comp": "$COMPQ",
+    "comp": "$COMP",            # Nasdaq Composite
     "spy":  "SPY",
     "qqq":  "QQQ",
 }

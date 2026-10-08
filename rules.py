@@ -62,7 +62,7 @@ def with_defaults(params, defaults):
 
 def universe_columns(p):
     p = with_defaults(p, UNIVERSE_DEFAULTS)
-    cols = ["unadj_close", "dv_pct"]
+    cols = ["unadj_close", "dv_pct", "listed"]
     cols += SIZE_COLUMNS[p["size"]] or []
     return cols
 
@@ -82,7 +82,8 @@ def template_columns(p):
 
 def universe_mask(df, params):
     p = with_defaults(params, UNIVERSE_DEFAULTS)
-    m = (df["unadj_close"] >= p["min_price"]) & (df["dv_pct"] >= 100 - p["liq_top_pct"])
+    m = ((df["listed"] == 1) & (df["unadj_close"] >= p["min_price"])
+         & (df["dv_pct"] >= 100 - p["liq_top_pct"]))
     cols = SIZE_COLUMNS[p["size"]]
     if cols:
         m &= df[cols].max(axis=1) > 0

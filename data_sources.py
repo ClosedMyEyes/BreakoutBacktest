@@ -28,6 +28,10 @@ import config
 EXCLUDE_NAME_RE = re.compile(r"\b(" + "|".join(config.EXCLUDE_NAME_WORDS) + r")\b")
 
 
+class SkipSymbol(Exception):
+    """Raised by a source when a symbol should be left out; the message is the reason."""
+
+
 # =============================================================================
 # NORGATE
 # =============================================================================
@@ -100,6 +104,22 @@ class NorgateSource:
                 out[col] = flag.to_numpy().astype("int8")
             except Exception:
                 out[col] = np.int8(0)
+        # Major-exchange listing (NYSE, Nasdaq, NYSE American...). Drop stocks that
+        # never listed on one (OTC-only) and any OTC history before the first listing.
+        # OTC history AFTER a delisting is kept so open trades exit at real prices
+        # (bankruptcies stay real losses); `listed` = 0 there, and the universe
+        # filter never allows new entries on those rows.
+        try:
+            lst = nd.major_exchange_listed_timeseries(
+                symbol, padding_setting=nd.PaddingType.NONE,
+                start_date=self.start_date, timeseriesformat="pandas-dataframe")
+            listed = lst.iloc[:, -1].reindex(df.index).fillna(0).to_numpy().astype("int8")
+        except Exception:
+            listed = np.ones(len(out), dtype="int8")
+        out["listed"] = listed
+        if listed.max() == 0:
+            raise SkipSymbol("never on a major exchange")
+        out = out.iloc[int(np.argmax(listed == 1)):].reset_index(drop=True)
         out.insert(0, "symbol", symbol)
         return out
 
@@ -250,6 +270,7 @@ class SyntheticSource:
             "symbol": symbol, "date": dates,
             "open": openp, "high": high, "low": low, "close": close,
             "volume": volume, "unadj_close": unadj, "turnover": close * volume,
+            "listed": np.int8(1),
         })
         big = rng.random() < 0.3
         for col in config.INDEX_MEMBERSHIP:
