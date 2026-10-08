@@ -58,6 +58,10 @@ EXIT_DEFAULTS = {
     "ts_bars":       0,         # X5: exit if not up ts_min_gain % after ts_bars (0 = off)
     "ts_min_gain":   5.0,
     "max_hold":      252,
+    "partial_frac":  0.33,      # X4: sell this fraction at the first target...
+    "partial_r":     2.0,       # ...at +partial_r R
+    "partial_pct":   0.0,       # ...or at +partial_pct % when > 0; then stop to breakeven
+                                # and trail the rest with `trail` (close below -> next open)
     "entry_day_stop": "path",   # buy-stop filled intraday and the day's low is at the stop:
                                 # path = assume a green bar went open-low-high-close (low came
                                 # before the fill, not stopped) and a red bar open-high-low-close
@@ -73,7 +77,7 @@ NOMINAL_R_PCT = 7.5
 def exit_columns(params):
     p = {**EXIT_DEFAULTS, **{k: v for k, v in params.items() if k in EXIT_DEFAULTS}}
     cols = []
-    if p["exit"] == "x3":
+    if p["exit"] in ("x3", "x4"):
         cols.append(p["trail"])
     if p["exit"] == "x2" and p["after_hold"] == "trail50":
         cols.append("sma50")
@@ -135,7 +139,12 @@ def find_entries(panel, setups, entry_p):
     timing = entry_p["vol_timing"]
 
     broke = h[t1] > piv
-    if timing == "a":
+    if setups.get("entry") == "open":              # F6: market order at the next open
+        ok = np.ones(len(t), dtype=bool)
+        entry_row = t1
+        raw = o[t1]
+        at_close = np.zeros(len(t), dtype=bool)
+    elif timing == "a":
         ok = broke & (o[t1] <= piv * (1 + mc))
         entry_row = t1
         raw = np.maximum(o[t1], piv)
@@ -199,8 +208,12 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
     model = p["exit"]
     target = entry_raw * (1 + p["target_pct"] / 100.0) if model in ("x1", "x2") else np.inf
     trail = None
-    if model == "x3":
+    if model in ("x3", "x4"):
         trail = panel.col(p["trail"])
+    partial_px = None          # x4: fill price of the partial sale once done
+    if model == "x4":
+        part_at = entry_raw * (1 + p["partial_pct"] / 100.0) if p["partial_pct"] > 0 \
+            else entry + p["partial_r"] * R
     elif model == "x2" and p["after_hold"] == "trail50":
         trail = panel.col("sma50")
 
@@ -251,6 +264,8 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
             if target_live and o[i] >= target:
                 exit_px, reason = fill_down(o[i]), "target (gap)"
                 break
+            if model == "x4" and partial_px is None and o[i] >= part_at:
+                partial_px, raise_stop_to = fill_down(o[i]), entry
             # Intraday: stop first (conservative)
             if l[i] <= stop:
                 exit_px = fill_down(stop)
@@ -259,12 +274,16 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
             if target_live and h[i] >= target:
                 exit_px, reason = fill_down(target), "target"
                 break
+            if model == "x4" and partial_px is None and h[i] >= part_at:
+                partial_px, raise_stop_to = fill_down(part_at), entry   # breakeven from the next bar
 
             # Close-based rules (exit at the next open unless noted)
             if model == "time" and bars >= p["time_bars"]:
                 exit_px, reason = fill_down(c[i]), "time exit"
                 break
             if model == "x3" and np.isfinite(trail[i]) and c[i] < trail[i]:
+                pending_open_exit = f"close below {p['trail']}"
+            if model == "x4" and partial_px is not None and np.isfinite(trail[i]) and c[i] < trail[i]:
                 pending_open_exit = f"close below {p['trail']}"
             if model == "x2" and hold_until >= 0 and i >= hold_until:
                 if p["after_hold"] == "exit":
@@ -277,6 +296,11 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
             if bars >= p["max_hold"]:
                 exit_px, reason = fill_down(c[i]), "max hold"
                 break
+
+    if partial_px is not None:                  # x4: blend the two sales
+        f = p["partial_frac"]
+        exit_px = f * partial_px + (1 - f) * exit_px
+        reason = f"partial, then {reason}"
 
     return {
         "entry_row": i_entry, "exit_row": i, "entry": entry, "stop": init_stop,

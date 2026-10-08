@@ -16,8 +16,8 @@ This is a separate program from Stockbot and never runs inside the live trading 
 | 4 | `engine.py`, `setup_trend.py`, `grid.py`: fill model, exits, Modes B and C | Written; tested |
 | 5 | `filter_test.py`: Mode A | Written; tested |
 | 5.4 | Kill test: F1 + X2 vs date-matched F0 | `grid.py` is set up for it |
-| 6 | Entry families | F0–F3 done; F4 (full VCP), F5 (flag), F6 (retest) to do |
-| 7 | Exit models | X1, X2 (original or breakeven stop after the +20% hold), X3, X5, X6 and time exit done; X4 (partial + trail) to do |
+| 6 | Entry families | F0–F6 done. F4 = zigzag swing points (3% or 5% swings, `--vcp-z`), F5 = pole + flag, F6 = first retest of an F1–F5 breakout, bought at the next open |
+| 7 | Exit models | X1, X2 (original or breakeven stop after the +20% hold), X3, X4 (sell part at +2R or +X%, stop to breakeven, trail the rest), X5, X6 and time exit done |
 | 8 | Mode C portfolio | Done, with Monte Carlo drawdown range |
 | 9–11 | Market light, fundamentals, earnings dates | Market features computed; rules to do |
 | 12–14 | Holdout run, scanner, forward test | To do |
@@ -101,7 +101,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 
 | Step | Time | Peak RAM |
 |---|---|---|
-| Feature build (22.8M rows) | 3 min | — |
+| Feature build (22.8M rows) | 3 min, plus about 2 min for the F4 swing points | — |
 | Mode A, full history | 14 s | 2.2 GB |
 | Mode B with 3 F0 seeds, full history | 14 s | 2.8 GB |
 | Mode B, 10-year window | 8 s | 2.3 GB |

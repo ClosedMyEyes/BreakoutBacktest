@@ -144,6 +144,36 @@ def symbol_features(p):
     f["vol10_50"] = g_roll(v, 10, "mean", pos) / v50
     f["vol50"] = v50
 
+    # F5 flag: pole top = highest high of the last FLAG_WINDOW bars, flag = the
+    # bars since it (age), flag low = lowest low since the top, pole low = lowest
+    # low in the POLE_BARS before the top
+    top = g_roll(h, config.FLAG_WINDOW, "max", pos)
+    age = pd.Series(np.nan, index=p.index)
+    for a in range(config.FLAG_MAX_BARS + 1):
+        age[(g_shift(h, a, pos, rpos) == top) & age.isna()] = a
+    flag_low = pd.Series(np.nan, index=p.index)
+    for a in range(config.FLAG_MAX_BARS + 1):
+        m = age == a
+        if m.any():
+            flag_low[m] = g_roll(l, a + 1, "min", pos)[m]
+    f["flag_top"] = top.where(age.notna())
+    f["flag_age"] = age
+    f["flag_low"] = flag_low
+    agev = age.to_numpy()
+    has = ~np.isnan(agev)
+    top_row = np.arange(len(p)) - np.where(has, agev, 0).astype(np.int64)
+    for wb in config.POLE_BARS:
+        lw = g_roll(l, wb + 1, "min", pos).to_numpy()
+        f[f"pole_low{wb}"] = np.where(has, lw[top_row], np.nan)
+
+    # F4 full VCP: swing points and the last four contractions
+    starts = np.flatnonzero(pos.to_numpy() == 0)
+    for z in config.VCP_SWING_PCTS:
+        vals = vcp_features(h.to_numpy(np.float64), l.to_numpy(np.float64),
+                            v.to_numpy(np.float64), starts, z)
+        for j, name in enumerate(VCP_COLS):
+            f[f"vcp{z}_{name}"] = vals[:, j]
+
     f["bars"] = pos.astype("int32")
 
     # Bars since the last price break (NaN = none so far); universe_mask uses it
@@ -155,6 +185,97 @@ def symbol_features(p):
         if f[col].dtype == np.float64:
             f[col] = f[col].astype(F32)
     return f
+
+
+VCP_COLS = ["pivot", "low", "d1", "d2", "d3", "d4", "hpos2", "hpos3", "hpos4", "volr"]
+
+
+def vcp_features(h, l, v, starts, z):
+    """Zigzag swing points with a z% reversal, then on every bar the final
+    contraction (last swing high -> lowest low since) and the three pullbacks
+    before it. A swing counts on bar t only once it is confirmed by bar t.
+
+    Columns (VCP_COLS): pivot = last swing high (NaN once price has gone above
+    it, or before the first one), low = lowest low since it, d1..d4 = depths of
+    the final and three earlier pullbacks as fractions, hposK = bar number of
+    pullback K's high (age = bars - hposK), volr = average volume in the final
+    pullback / in the one before.
+    """
+    n = len(h)
+    ev = np.zeros(n, dtype=bool)                    # bars where the state changed
+    vals = np.full((n, len(VCP_COLS)), np.nan)
+    cv = np.concatenate([[0.0], np.cumsum(np.nan_to_num(v))]).tolist()
+    zd, zu = 1 - z / 100.0, 1 + z / 100.0
+    hl, ll = h.tolist(), l.tolist()
+    nan = float("nan")
+    ends = list(starts[1:]) + [n]
+
+    for a, b in zip(starts.tolist(), ends):
+        pt, pv, pi = [], [], []                     # confirmed swings: +1 high / -1 low, value, row
+        d = 0                                       # 1 = rising leg, -1 = falling leg
+        hi, hii, lo, loi = hl[a], a, ll[a], a
+
+        def state(i):
+            base = len(pt) - 1 if d == -1 else len(pt) - 2 if d == 1 else -1
+            if base < 0 or pt[base] != 1:
+                return None
+            h1, h1i = pv[base], pi[base]
+            if d == -1:
+                l1, l1i = lo, loi
+            else:
+                if hi > h1:
+                    return None                     # already broke out above the last swing high
+                l1, l1i = pv[base + 1], pi[base + 1]
+            row = [h1, l1, (h1 - l1) / h1, nan, nan, nan, nan, nan, nan, nan]
+            for k in (2, 3, 4):
+                j = base - 2 * (k - 1)
+                if j < 0:
+                    break
+                row[k + 1] = (pv[j] - pv[j + 1]) / pv[j]
+                row[k + 4] = pi[j] - a
+            if base >= 2:
+                h2i, l2i = pi[base - 2], pi[base - 1]
+                fin = (cv[l1i + 1] - cv[h1i + 1]) / (l1i - h1i)
+                prev = (cv[l2i + 1] - cv[h2i + 1]) / (l2i - h2i)
+                row[9] = fin / prev if prev > 0 else nan
+            return row
+
+        for i in range(a, b):
+            hv, lv = hl[i], ll[i]
+            changed = i == a
+            if d == 1:
+                if hv > hi:
+                    h1 = pv[-2] if len(pv) >= 2 else None
+                    changed = h1 is not None and hi <= h1 < hv     # just broke out
+                    hi, hii = hv, i
+                elif lv <= hi * zd:
+                    pt.append(1); pv.append(hi); pi.append(hii)
+                    d, lo, loi, changed = -1, lv, i, True
+            elif d == -1:
+                if lv < lo:
+                    lo, loi, changed = lv, i, True
+                elif hv >= lo * zu:
+                    pt.append(-1); pv.append(lo); pi.append(loi)
+                    d, hi, hii, changed = 1, hv, i, True
+            else:
+                if hv > hi:
+                    hi, hii = hv, i
+                if lv < lo:
+                    lo, loi = lv, i
+                if lo <= hi * zd:
+                    if hii < loi:
+                        pt.append(1); pv.append(hi); pi.append(hii); d = -1
+                    else:
+                        pt.append(-1); pv.append(lo); pi.append(loi); d = 1
+                    changed = True
+            if changed:
+                ev[i] = True
+                row = state(i)
+                if row is not None:
+                    vals[i] = row
+
+    last = np.maximum.accumulate(np.where(ev, np.arange(n), 0))
+    return vals[last]
 
 
 def symbol_labels(p, delisted_set):

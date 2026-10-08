@@ -88,6 +88,16 @@ BREAKOUT_LOOKBACKS = [20, 50, 252]
 TIGHTNESS_WINDOWS  = [5, 10, 15]
 FORWARD_HORIZONS   = [5, 20, 60]
 
+# F4 full VCP: zigzag swing sizes (%). A swing high counts once price falls this
+# far below it, so the final contraction is always at least this deep.
+VCP_SWING_PCTS = [3, 5]
+# F5 flag: the pole top is the highest high of the last FLAG_WINDOW bars (pole
+# of up to 8 weeks + flag of up to FLAG_MAX_BARS), and the pole low is the lowest
+# low in the POLE_BARS before the top.
+FLAG_MAX_BARS = 25
+POLE_BARS     = [20, 40]       # 4 and 8 weeks
+FLAG_WINDOW   = FLAG_MAX_BARS + max(POLE_BARS)
+
 # Price breaks (found on the Norgate trial, 2026-10-08). A day where Norgate's
 # adjustment factor (unadjusted / adjusted close) moves, yet the adjusted close
 # still jumps more than BREAK_MOVE_PCT, or any bar 10x up or 90% down. These are
