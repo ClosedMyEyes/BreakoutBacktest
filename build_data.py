@@ -32,7 +32,7 @@ parser.add_argument("--source",  choices=["norgate", "synthetic"], default="norg
 parser.add_argument("--limit",   type=int, default=0, help="Only the first N symbols (0 = all)")
 parser.add_argument("--workers", type=int, default=4, help="Parallel Norgate requests")
 parser.add_argument("--list-subtypes", action="store_true",
-                    help="Print the security subtype counts and exit (check COMMON_STOCK_SUBTYPES)")
+                    help="Print subtype1/subtype2 counts and how many symbols the filter keeps, then exit")
 parser.add_argument("--synthetic-symbols", type=int, default=400)
 args = parser.parse_args()
 
@@ -47,9 +47,12 @@ def main():
     print(f"{len(symbols)} symbols listed")
 
     if args.list_subtypes:
-        counts = Counter(src.subtype(s) for s in symbols)
-        for k, v in counts.most_common():
-            print(f"  {v:7d}  {k}")
+        counts = Counter((src.subtype(s), src.subtype(s, 2)) for s in symbols)
+        print("  count  subtype1 / subtype2")
+        for (s1, s2), v in sorted(counts.items(), key=lambda kv: (str(kv[0][0]), -kv[1])):
+            print(f"  {v:6d}  {s1} / {s2}")
+        kept = [s for s in symbols if src.is_common_stock(s)]
+        print(f"\nKept as common stock with the current config.py filters: {len(kept)}")
         return
 
     t0 = time.time()

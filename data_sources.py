@@ -17,12 +17,15 @@ SyntheticSource random but realistic-looking stocks (trends, bases, breakouts,
                 before the trial starts. Never use its results for decisions.
 """
 
+import re
 import zlib
 
 import numpy as np
 import pandas as pd
 
 import config
+
+EXCLUDE_NAME_RE = re.compile(r"\b(" + "|".join(config.EXCLUDE_NAME_WORDS) + r")\b")
 
 
 # =============================================================================
@@ -43,17 +46,22 @@ class NorgateSource:
             syms += self.nd.database_symbols(db) or []
         return sorted(set(syms))
 
-    def subtype(self, symbol):
+    def subtype(self, symbol, level=1):
         try:
-            return self.nd.subtype1(symbol)
+            return getattr(self.nd, f"subtype{level}")(symbol)
         except Exception:
             return None
 
     def is_common_stock(self, symbol):
-        if config.COMMON_STOCK_SUBTYPES is not None:
-            return self.subtype(symbol) in config.COMMON_STOCK_SUBTYPES
+        """Subtype filter first (e.g. Equity), then drop names that look like
+        units, warrants, preferreds and funds that slip through it."""
+        if config.COMMON_STOCK_SUBTYPES is not None and \
+                self.subtype(symbol) not in config.COMMON_STOCK_SUBTYPES:
+            return False
+        if config.EXCLUDE_SUBTYPE2 and self.subtype(symbol, 2) in config.EXCLUDE_SUBTYPE2:
+            return False
         name = (self.nd.security_name(symbol) or "").upper()
-        return not any(h in name for h in config.EXCLUDE_NAME_HINTS)
+        return not (EXCLUDE_NAME_RE.search(name) or "%" in name)
 
     # ── One symbol ───────────────────────────────────────────────────────────
     def symbol_prices(self, symbol):
@@ -191,7 +199,7 @@ class SyntheticSource:
     def is_common_stock(self, symbol):
         return True
 
-    def subtype(self, symbol):
+    def subtype(self, symbol, level=1):
         return "Synthetic"
 
     def symbol_prices(self, symbol):

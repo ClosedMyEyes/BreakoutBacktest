@@ -37,12 +37,16 @@ RESULTS_DIR       = os.path.join(WORK_DIR, "results")           # grid CSVs and 
 
 NORGATE_DATABASES = ["US Equities", "US Equities Delisted"]
 
-# Security subtypes kept as "common stock". Norgate's exact labels are checked
-# during trial week 1: run `python build_data.py --list-subtypes` and edit this.
-COMMON_STOCK_SUBTYPES = None   # None = keep everything that isn't in EXCLUDE_NAME_HINTS
-EXCLUDE_NAME_HINTS = [
-    " ETF", " ETN", " FUND", " TRUST UNITS", " PREFERRED", " PFD", " WARRANT",
-    " WTS", " UNIT", " RIGHTS", " NOTES", " DEBENTURE", "%",
+# Security subtypes kept as "common stock". Trial check (2026-10-08): subtype1
+# is Equity / Exchange Traded Product / Derivative / Hybrid / Debt. Keep Equity,
+# then drop subtype2 values listed below and names containing EXCLUDE_NAME_WORDS or "%".
+# Run `python build_data.py --list-subtypes` to see subtype2 values and the count kept.
+COMMON_STOCK_SUBTYPES = ["Equity"]
+EXCLUDE_SUBTYPE2 = []           # fill in after seeing the subtype2 breakdown
+# Whole words only, so "UNITED" or "FUNDAMENTAL" don't match "UNIT" or "FUND"
+EXCLUDE_NAME_WORDS = [
+    "ETF", "ETN", "FUND", "PREFERRED", "PFD", "WARRANT", "WARRANTS", "WTS", "UNIT", "UNITS",
+    "RIGHT", "RIGHTS", "NOTES", "DEBENTURE", "DEBENTURES",
 ]
 
 INDEX_MEMBERSHIP = {            # column name -> Norgate index name
