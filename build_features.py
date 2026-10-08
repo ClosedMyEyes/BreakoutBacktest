@@ -30,6 +30,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import config
+from rules import price_breaks
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--chunk", type=int, default=3000, help="Symbols per chunk")
@@ -144,6 +145,11 @@ def symbol_features(p):
     f["vol50"] = v50
 
     f["bars"] = pos.astype("int32")
+
+    # Bars since the last price break (NaN = none so far); universe_mask uses it
+    brk = pd.Series(price_breaks(p["symbol"], c, p["unadj_close"]), index=p.index)
+    last_brk = pos.where(brk).groupby(p["symbol"], observed=True).ffill()
+    f["bars_since_break"] = pos - last_brk
 
     for col in f.columns:
         if f[col].dtype == np.float64:
@@ -273,6 +279,11 @@ def main():
         print(f"  chunk {i + 1}/{len(bounds) - 1}  rows {a:,}-{b:,}  ({time.time() - t0:.0f}s)")
     feat_writer.close()
     lab_writer.close()
+
+    since = pq.read_table(config.FEATURES_FILE, columns=["bars_since_break"]).column(0).to_pandas()
+    hit = since == 0
+    print(f"Price breaks: {int(hit.sum())} on {pd.Series(sym_col[hit.to_numpy()]).nunique()} stocks; "
+          f"each blocks new entries for the next block_after_break bars")
 
     print("Ranking RS and liquidity across the market...")
     ranks = build_ranks(prices_tbl, config.FEATURES_FILE)

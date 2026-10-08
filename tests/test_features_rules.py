@@ -102,5 +102,39 @@ def test_holdout_is_locked():
 
 def test_universe_needs_major_exchange_listing():
     df = pd.DataFrame({"unadj_close": [20.0, 20.0, 3.0], "dv_pct": [90.0, 90.0, 90.0],
-                       "listed": [1, 0, 1]})
+                       "listed": [1, 0, 1], "bars_since_break": [np.nan] * 3})
     assert rules.universe_mask(df, {}).tolist() == [True, False, False]
+
+
+def one_stock(close, unadj):
+    n = len(close)
+    close, unadj = np.asarray(close, float), np.asarray(unadj, float)
+    return pd.DataFrame({"symbol": "AAA", "date": pd.bdate_range("2020-01-01", periods=n),
+                         "open": close, "high": close * 1.01, "low": close * 0.99, "close": close,
+                         "volume": 1e6, "unadj_close": unadj, "turnover": unadj * 1e6})
+
+
+def test_clean_split_is_not_a_break():
+    close = np.full(300, 50.0)
+    unadj = np.where(np.arange(300) < 150, 100.0, 50.0)       # 2-for-1 split, adjusted smooth
+    f = bf.symbol_features(one_stock(close, unadj))
+    assert f["bars_since_break"].isna().all()
+
+
+def test_price_break_blocks_new_entries():
+    i = np.arange(300)
+    close = np.where(i < 150, 2.0, 16.0)                      # adjusted close jumps 8x...
+    unadj = np.where(i < 150, 0.2, 16.0)                      # ...on a day the factor moves 10x
+    f = bf.symbol_features(one_stock(close, unadj))
+    s = f["bars_since_break"]
+    assert s.iloc[:150].isna().all() and s.iloc[150] == 0 and s.iloc[160] == 10
+    df = pd.DataFrame({"unadj_close": unadj, "dv_pct": 90.0, "listed": 1, "bars_since_break": s})
+    m = rules.universe_mask(df, {"min_price": 0})
+    assert m[:150].all() and not m[150:].any()                # blocked for 252 bars from the break
+    assert rules.universe_mask(df, {"min_price": 0, "block_after_break": 0}).all()
+
+
+def test_extreme_bar_is_a_break_without_adjustment():
+    close = np.where(np.arange(100) < 50, 1.0, 12.0)          # 12x with no factor change
+    f = bf.symbol_features(one_stock(close, close))
+    assert f["bars_since_break"].iloc[50] == 0

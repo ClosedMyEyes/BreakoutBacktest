@@ -88,6 +88,17 @@ BREAKOUT_LOOKBACKS = [20, 50, 252]
 TIGHTNESS_WINDOWS  = [5, 10, 15]
 FORWARD_HORIZONS   = [5, 20, 60]
 
+# Price breaks (found on the Norgate trial, 2026-10-08). A day where Norgate's
+# adjustment factor (unadjusted / adjusted close) moves, yet the adjusted close
+# still jumps more than BREAK_MOVE_PCT, or any bar 10x up or 90% down. These are
+# usually old shares swapped for new ones (a bankruptcy exit like WW in 2025, a
+# de-SPAC) or a micro-cap reverse split. Indicators that look back across the
+# break are meaningless, so rules.universe_mask blocks new entries for
+# `block_after_break` bars afterwards.
+BREAK_FACTOR_JUMP = 1.4     # factor moves by more than 1.4x either way
+BREAK_MOVE_PCT    = 25.0
+BREAK_EXTREME     = 10.0
+
 # =============================================================================
 # VALIDATION (Phase 3)
 # =============================================================================

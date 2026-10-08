@@ -9,7 +9,8 @@ Every function looks only at columns for day t (the signal day). Orders are for
 day t+1. Forward-return columns are never read here.
 
 Contents
-  universe_mask     price / liquidity / size filters
+  universe_mask     price / liquidity / size filters, price-break block
+  price_breaks      days where old and new price history don't connect
   template_mask     Minervini's Trend Template (8 rules, with the Mode A knobs)
   entry setups      F1 simple breakout, F2 tightness (VCP v1), F3 volatility
                     contraction (VCP v2). F4-F6 come in Phase 6.
@@ -20,6 +21,8 @@ Contents
 import numpy as np
 import pandas as pd
 
+import config
+
 # =============================================================================
 # DEFAULTS
 # =============================================================================
@@ -28,6 +31,7 @@ UNIVERSE_DEFAULTS = {
     "min_price":   5.0,     # unadjusted close, $
     "liq_top_pct": 50.0,    # keep the top X% of stocks by 50-day dollar volume that day
     "size":        "all",   # all / sp500 / sp400 / sp600 / sp400_600
+    "block_after_break": 252,  # no new entries for N bars after a price break (0 = off)
 }
 
 TEMPLATE_DEFAULTS = {
@@ -64,6 +68,8 @@ def universe_columns(p):
     p = with_defaults(p, UNIVERSE_DEFAULTS)
     cols = ["unadj_close", "dv_pct", "listed"]
     cols += SIZE_COLUMNS[p["size"]] or []
+    if p["block_after_break"] > 0:
+        cols += ["bars_since_break"]
     return cols
 
 
@@ -87,7 +93,20 @@ def universe_mask(df, params):
     cols = SIZE_COLUMNS[p["size"]]
     if cols:
         m &= df[cols].max(axis=1) > 0
+    if p["block_after_break"] > 0:
+        m &= ~(df["bars_since_break"] < p["block_after_break"])     # NaN = never broke
     return m.fillna(False).to_numpy()
+
+
+def price_breaks(sym, close, unadj_close):
+    """True on the bar of a price break (see config.BREAK_*). Uses bars t-1 and t only."""
+    move = close / close.groupby(sym, observed=True).shift(1)
+    factor = unadj_close / close
+    fj = factor / factor.groupby(sym, observed=True).shift(1)
+    adj_day = (fj > config.BREAK_FACTOR_JUMP) | (fj < 1 / config.BREAK_FACTOR_JUMP)
+    big = (move - 1).abs() * 100 > config.BREAK_MOVE_PCT
+    extreme = (move >= config.BREAK_EXTREME) | (move <= 1 / config.BREAK_EXTREME)
+    return ((adj_day & big) | extreme).fillna(False).to_numpy()
 
 
 def template_mask(df, params):

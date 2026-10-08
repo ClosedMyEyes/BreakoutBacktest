@@ -17,6 +17,8 @@ Columns in the bar table:
   adj_chg%     day-over-day change in the adjusted close (should look normal on a split day)
   unadj_chg%   day-over-day change in the printed price (jumps on a split day)
   listed       1 = on NYSE/Nasdaq/NYSE American that day, 0 = OTC or before listing
+  note         "<- PRICE BREAK" = old and new prices don't connect (see config.BREAK_*);
+               the stock gets no new entries for a year after it
 """
 
 import argparse
@@ -25,6 +27,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 import config
+import rules
 
 parser = argparse.ArgumentParser()
 parser.add_argument("symbol", nargs="?")
@@ -52,6 +55,8 @@ def bars(sym):
     jump = p["factor"] / p["factor"].shift(1)
     p["note"] = ""
     p.loc[(jump > 1.01) | (jump < 0.99), "note"] = "<- adjustment"
+    brk = rules.price_breaks(pd.Series(sym, index=p.index), p["close"], p["unadj_close"])
+    p.loc[brk, "note"] = "<- PRICE BREAK"
     return p
 
 
@@ -74,7 +79,7 @@ def show_symbol(sym, symbols):
 
     adj = p.index[p["note"] != ""]
     if len(adj):
-        print(f"\nAdjustment days ({len(adj)}), with the bar before and after:")
+        print(f"\nAdjustment days and price breaks ({len(adj)}), with the bar before and after:")
         for i in adj:
             print(fmt(p.iloc[max(0, i - 1): i + 2]))
             print()

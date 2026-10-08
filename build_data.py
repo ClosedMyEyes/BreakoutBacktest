@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 import config
+import rules
 from data_sources import NorgateSource, SkipSymbol, SyntheticSource
 
 parser = argparse.ArgumentParser()
@@ -139,22 +140,28 @@ def sanity_checks(prices, symbols_df, market):
 
     # Adjustment spot-checks: days the unadjusted/adjusted ratio moves a lot. That
     # is a split, reverse split or other capital event. The printed price jumps;
-    # the adjusted close should not.
+    # the adjusted close should not. Where it does anyway, or on any 10x / -90%
+    # bar, rules.price_breaks marks a price break.
     by_sym = prices.groupby("symbol", observed=True)
     ratio = prices["unadj_close"] / prices["close"]
     jump = ratio / ratio.groupby(prices["symbol"], observed=True).shift(1)
-    adj_chg = prices["close"] / by_sym["close"].shift(1) - 1
-    unadj_chg = prices["unadj_close"] / by_sym["unadj_close"].shift(1) - 1
-    flag = (jump > 1.4) | (jump < 0.7)
-    cand = pd.DataFrame({
+    adj_day = (jump > config.BREAK_FACTOR_JUMP) | (jump < 1 / config.BREAK_FACTOR_JUMP)
+    brk = rules.price_breaks(prices["symbol"], prices["close"], prices["unadj_close"])
+    table = pd.DataFrame({
         "symbol": prices["symbol"].astype(str), "date": prices["date"].dt.date,
-        "printed_chg%": (unadj_chg * 100).round(1), "adjusted_chg%": (adj_chg * 100).round(1),
-    })[flag]
-    cand["looks"] = ["CHECK: adjusted jumps" if abs(a) > 25 else "ok: adjusted smooth"
-                     for a in cand["adjusted_chg%"]]
-    cand = cand.reindex(cand["adjusted_chg%"].abs().sort_values(ascending=False).index)
-    print(f"\nSplit / adjustment days: {len(cand)}  (printed price jumps, adjusted close should not)")
-    print(cand.head(10).to_string(index=False) if len(cand) else "  none found")
+        "printed_chg%": ((prices["unadj_close"] / by_sym["unadj_close"].shift(1) - 1) * 100).round(1),
+        "adjusted_chg%": ((prices["close"] / by_sym["close"].shift(1) - 1) * 100).round(1),
+    })
+    n_adj, n_brk = int(adj_day.sum()), int(brk.sum())
+    print(f"\nSplit / adjustment days: {n_adj}. Adjusted close smooth on {int((adj_day & ~brk).sum())}.")
+    print(f"Price breaks: {n_brk} on {table.loc[brk, 'symbol'].nunique()} stocks "
+          f"({int((adj_day & brk).sum())} adjustment days where the adjusted close still jumped "
+          f">{config.BREAK_MOVE_PCT:.0f}%, {int((~adj_day & brk).sum())} other 10x / -90% bars).")
+    print(f"These stocks get no new entries for {rules.UNIVERSE_DEFAULTS['block_after_break']} bars "
+          f"after the break (rules.py block_after_break).")
+    if n_brk:
+        b = table[brk]
+        print(b.reindex(b["adjusted_chg%"].abs().sort_values(ascending=False).index).head(10).to_string(index=False))
     print("  Look at one with: python show_data.py SYMBOL")
 
     print("\nAlso check by hand: known 2008-era bankruptcies (e.g. Lehman, Washington Mutual)")
