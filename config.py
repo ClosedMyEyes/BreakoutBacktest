@@ -42,7 +42,10 @@ NORGATE_DATABASES = ["US Equities", "US Equities Delisted"]
 # then drop subtype2 values listed below and names containing EXCLUDE_NAME_WORDS or "%".
 # Run `python build_data.py --list-subtypes` to see subtype2 values and the count kept.
 COMMON_STOCK_SUBTYPES = ["Equity"]
-EXCLUDE_SUBTYPE2 = []           # fill in after seeing the subtype2 breakdown
+# Equity subtype2 on the trial: Operating/Holding Company 7144, Special Purpose
+# Company 886 (SPACs: cash shells that don't trend), Investment Company 477
+# (closed-end funds, BDCs). Keep operating companies only.
+EXCLUDE_SUBTYPE2 = ["Special Purpose Company", "Investment Company"]
 # Whole words only, so "UNITED" or "FUNDAMENTAL" don't match "UNIT" or "FUND"
 EXCLUDE_NAME_WORDS = [
     "ETF", "ETN", "FUND", "PREFERRED", "PFD", "WARRANT", "WARRANTS", "WTS", "UNIT", "UNITS",
