@@ -27,7 +27,8 @@ Exit models
         fast_bars of entry, the target is switched off and the trade is held at
         least hold_bars from entry (initial stop still active), then exits by
         after_hold (trail50 = next open after a close below the 50-day; exit =
-        at the close of the last hold bar)
+        at the close of the last hold bar). hold_stop=breakeven raises the stop
+        to the entry price from the bar after the hold starts.
   x3    stop, then exit on a close below the trailing average (trail)
   time  stop (optional), exit at the close after time_bars
   Any model also takes ts_bars/ts_min_gain (X5 time stop) and max_hold.
@@ -50,6 +51,8 @@ EXIT_DEFAULTS = {
     "fast_bars":     15,        # 3 weeks
     "hold_bars":     40,        # 8 weeks
     "after_hold":    "trail50",
+    "hold_stop":     "initial", # x2 once the hold starts: initial = keep the original stop,
+                                # breakeven = raise it to the entry price from the next bar
     "trail":         "sma50",   # sma50 / ema21 / sma10
     "time_bars":     20,
     "ts_bars":       0,         # X5: exit if not up ts_min_gain % after ts_bars (0 = off)
@@ -187,6 +190,7 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
     else:
         R = entry * NOMINAL_R_PCT / 100.0
 
+    init_stop = stop           # sizing and R always use the initial stop
     model = p["exit"]
     target = entry_raw * (1 + p["target_pct"] / 100.0) if model in ("x1", "x2") else np.inf
     trail = None
@@ -198,6 +202,7 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
     last = panel.last_row[i_entry]
     hold_until = -1            # x2: set once the fast-gain hold starts; target is off from then on
     pending_open_exit = None   # reason, when a close-based rule fired yesterday
+    raise_stop_to = None       # x2 breakeven: new stop level, applied from the next bar
     exit_px, reason, i = None, None, i_entry
 
     def fill_down(px):
@@ -215,6 +220,8 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
                 break
             i += 1
             bars = i - i_entry
+            if raise_stop_to is not None:
+                stop, raise_stop_to = max(stop, raise_stop_to), None
 
             if pending_open_exit is not None:
                 exit_px, reason = fill_down(o[i]), pending_open_exit
@@ -224,6 +231,8 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
             if model == "x2" and hold_until < 0 and bars <= p["fast_bars"] and \
                     h[i] >= entry_raw * (1 + p["fast_gain_pct"] / 100.0):
                 hold_until = i_entry + int(p["hold_bars"])
+                if p["hold_stop"] == "breakeven":
+                    raise_stop_to = entry      # from the next bar: today's order of events is unknown
             target_live = model in ("x1", "x2") and hold_until < 0
 
             # Gaps through the stop or target
@@ -235,7 +244,8 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
                 break
             # Intraday: stop first (conservative)
             if l[i] <= stop:
-                exit_px, reason = fill_down(stop), "stopped"
+                exit_px = fill_down(stop)
+                reason = "stopped (breakeven)" if stop >= entry else "stopped"
                 break
             if target_live and h[i] >= target:
                 exit_px, reason = fill_down(target), "target"
@@ -260,7 +270,7 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
                 break
 
     return {
-        "entry_row": i_entry, "exit_row": i, "entry": entry, "stop": stop,
+        "entry_row": i_entry, "exit_row": i, "entry": entry, "stop": init_stop,
         "exit": exit_px, "R_pct": R / entry * 100, "result_R": (exit_px - entry) / R,
         "ret_pct": (exit_px / entry - 1) * 100, "exit_reason": reason,
         "bars_held": i - i_entry,

@@ -191,3 +191,24 @@ def test_portfolio_accounting_and_same_day_exit():
     assert taken["shares"].tolist() == [shares1, shares2]
     assert curve["equity"].iloc[-1] == pytest.approx(eq1 + shares2 * 15.0)
     assert curve["positions"].iloc[-1] == 0
+
+
+def test_oneil_breakeven_variant():
+    # +25% on bar 3 starts the hold; then a drop to 99 hits the breakeven stop
+    # but not the original 92.5 stop
+    bars = [FLAT, FLAT, FLAT, (110, 126, 109, 125), (110, 111, 99, 100), FLAT, FLAT]
+    sma50 = np.full(len(bars), 90.0)
+    pn = panel_from(bars, extra={"sma50": sma50})
+    t = trade(pn, exit="x2", hold_stop="breakeven")
+    assert t["exit_reason"] == "stopped (breakeven)"
+    assert t["exit"] == pytest.approx(100) and t["result_R"] == pytest.approx(0)
+    assert t["stop"] == pytest.approx(92.5)                 # R and sizing keep the initial stop
+    t = trade(pn, exit="x2", hold_stop="initial")
+    assert t["exit_reason"] != "stopped (breakeven)" and t["exit_row"] == 6
+
+
+def test_breakeven_not_applied_on_the_bar_the_hold_starts():
+    bars = [FLAT, FLAT, (100, 126, 95, 120), (105, 106, 104, 105)]
+    pn = panel_from(bars, extra={"sma50": np.full(4, 90.0)})
+    t = trade(pn, exit="x2", hold_stop="breakeven")
+    assert t["exit_reason"] == "end of data"

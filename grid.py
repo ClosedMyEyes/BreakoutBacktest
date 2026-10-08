@@ -93,6 +93,7 @@ PARAM_GRID = {
 
     # ── Exit (plan Phase 7) ──────────────────────────────────────────────────
     "EXIT":            ["x2"],
+    "HOLD_STOP":       ["initial", "breakeven"],  # x2: stop after the +20% hold starts
     "STOP_PCT":        [7.5],
     "TARGET_PCT":      [22.5],
     "SLIPPAGE_PCT":    [0.20],

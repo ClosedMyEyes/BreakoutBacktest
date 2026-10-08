@@ -17,7 +17,7 @@ This is a separate program from Stockbot and never runs inside the live trading 
 | 5 | `filter_test.py`: Mode A | Written; tested |
 | 5.4 | Kill test: F1 + X2 vs date-matched F0 | `grid.py` is set up for it |
 | 6 | Entry families | F0–F3 done; F4 (full VCP), F5 (flag), F6 (retest) to do |
-| 7 | Exit models | X1, X2, X3, X5, X6 and time exit done; X4 (partial + trail) to do |
+| 7 | Exit models | X1, X2 (original or breakeven stop after the +20% hold), X3, X5, X6 and time exit done; X4 (partial + trail) to do |
 | 8 | Mode C portfolio | Done, with Monte Carlo drawdown range |
 | 9–11 | Market light, fundamentals, earnings dates | Market features computed; rules to do |
 | 12–14 | Holdout run, scanner, forward test | To do |
