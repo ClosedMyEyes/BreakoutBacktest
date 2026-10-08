@@ -141,7 +141,7 @@ def template_mask(df, params):
 # Each returns a dict of numpy arrays aligned with df rows: `setup` (bool, a
 # buy-stop is working for day t+1), `pivot` (buy-stop level) and `stop`
 # (structural stop level, NaN when the exit model sets its own stop). F6 adds
-# entry="open": buy at the next open instead of a buy-stop.
+# entry="open": the signal day is the trigger (buy its close, or the next open).
 # =============================================================================
 
 ENTRY_DEFAULTS = {
@@ -167,16 +167,18 @@ ENTRY_DEFAULTS = {
     "flag_w":       8,        # ...within w weeks (4 / 8)
     "flag_r":       33.0,     # flag pulls back no more than r % of the advance
     "flag_d":       5,        # flag lasts at least d bars (at most config.FLAG_MAX_BARS)
-    # F6 pullback / retest (entry at the next open, stop = retest-day low)
+    # F6 pullback / retest (buy the retest day's close, or the next open; stop = its low)
     "rt_base":      "f1",     # family whose breakout is retested (f1-f5, with its own knobs)
     "rt_m":         10,       # retest within m bars of the breakout
     "rt_x":         2.0,      # the low comes within x % of the level
     "rt_ref":       "pivot",  # level: pivot / ema21 / sma10
     # Shared
-    "max_chase":    5.0,      # skip if day t+1 opens more than this % above the pivot
-    "vol_mult":     0.0,      # breakout volume >= this x 50-day average (0 = off)
-    "vol_timing":   "a",      # a = buy stop, no volume check; b = enter at close of
-                              # breakout day if volume confirms; c = next day's open
+    "entry_at":     "close",  # close = buy at the close of the first day that closes above
+                              # the pivot; stop = buy stop at the pivot during the day;
+                              # next_open = the open after that close (see engine.py)
+    "max_chase":    5.0,      # skip if the fill is more than this % above the pivot
+    "vol_mult":     0.0,      # breakout-day volume >= this x 50-day average (0 = off;
+                              # ignored with entry_at=stop, which can't see the day's volume)
 }
 
 
@@ -199,11 +201,11 @@ def entry_columns(params):
     elif fam == "f6":
         if p["rt_base"] == "f6":
             raise ValueError("rt_base must be f1-f5")
-        cols = entry_columns({**p, "family": p["rt_base"], "vol_timing": "a"})
+        cols = entry_columns({**p, "family": p["rt_base"], "vol_mult": 0})
         cols += ["high", "low", "close"] + ([p["rt_ref"]] if p["rt_ref"] != "pivot" else [])
     else:
         raise ValueError(f"Unknown entry family {fam!r}")
-    if p["vol_timing"] != "a":
+    if p["entry_at"] != "stop" and p["vol_mult"] > 0 and fam != "f6":
         cols += ["vol_ratio"]
     return cols
 
@@ -285,7 +287,7 @@ def retest_setups(df, p, base_mask):
     the first day within rt_m bars whose low comes within rt_x % of the level
     (the breakout pivot, or a moving average) and that closes above the level
     and above the prior close. Entry at the next open, stop = that day's low."""
-    bs = entry_setups(df, {**p, "family": p["rt_base"], "vol_timing": "a"}, base_mask)
+    bs = entry_setups(df, {**p, "family": p["rt_base"]}, base_mask)
     n = len(df)
     sym = df["symbol"].astype("category").cat.codes.to_numpy()
     same_prev = np.r_[False, sym[1:] == sym[:-1]]

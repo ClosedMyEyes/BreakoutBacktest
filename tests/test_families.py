@@ -103,7 +103,7 @@ def test_open_entry_fills_at_next_open():
     pn = panel_from([(100, 101, 99, 100), (103, 104, 102, 103)])
     s = {"setup": np.array([True, False]), "pivot": np.full(2, np.nan),
          "stop": np.array([99.0, np.nan]), "entry": "open"}
-    cand = engine.find_entries(pn, s, {"max_chase": 5.0, "vol_timing": "a"})
+    cand = engine.find_entries(pn, s, {"max_chase": 5.0, "entry_at": "stop"})
     assert cand["entry_row"].tolist() == [1] and cand["entry_raw"].tolist() == [103]
 
 
@@ -128,3 +128,39 @@ def test_x4_stop_moves_to_breakeven_after_partial():
                               {**BASE, "exit": "x4", "partial_frac": 0.5, "partial_r": 2.0})
     assert t["exit_reason"] == "partial, then stopped (breakeven)"
     assert t["exit"] == pytest.approx(0.5 * 115 + 0.5 * 100)
+
+
+def test_retest_bought_at_the_close_by_default():
+    pn = panel_from([(100, 101, 99, 100), (103, 104, 102, 103)])
+    s = {"setup": np.array([True, False]), "pivot": np.full(2, np.nan),
+         "stop": np.array([99.0, np.nan]), "entry": "open"}
+    cand = engine.find_entries(pn, s, {"max_chase": 5.0, "entry_at": "close", "vol_mult": 0})
+    assert cand["entry_row"].tolist() == [0] and cand["entry_raw"].tolist() == [100]
+    assert cand["at_close"].tolist() == [True]
+
+
+def test_close_entry_needs_no_volume_column_and_respects_chase():
+    bars = [(95, 100, 94, 99), (99, 106, 98, 104), (104, 105, 103, 104)]
+    pn = panel_from(bars)                                       # no vol_ratio column
+    s = {"setup": np.array([True, False, False]), "pivot": np.array([100.0, np.nan, np.nan]),
+         "stop": np.full(3, np.nan)}
+    cand = engine.find_entries(pn, s, {"max_chase": 5.0, "entry_at": "close", "vol_mult": 0})
+    assert cand["entry_row"].tolist() == [1] and cand["entry_raw"].tolist() == [104]
+    cand = engine.find_entries(pn, s, {"max_chase": 3.0, "entry_at": "close", "vol_mult": 0})
+    assert len(cand["entry_row"]) == 0                          # closed 4% above the pivot
+
+
+def test_f0_buys_at_the_same_time_of_day_as_the_family():
+    flat = (100, 101, 99, 100)
+    a = panel_from([flat] * 6, symbol="AAA").df
+    b = panel_from([(50, 51, 49, 50), (50, 56, 45, 55), (55, 56, 54, 55), (55, 56, 54, 55),
+                    (55, 56, 54, 55), (55, 56, 54, 55)], symbol="BBB").df
+    pn = engine.Panel(pd.concat([a, b], ignore_index=True), set())
+    fam = pd.DataFrame({"signal_date": [pn.date[0]], "signal_row": [0], "entry_row": [1],
+                        "R_pct": [7.5], "at_close": [True]})
+    base = np.zeros(len(pn.o), dtype=bool)
+    base[6] = True                                              # only BBB passes on the signal day
+    f0 = engine.run_f0(pn, base, fam, {**BASE, "exit": "time", "time_bars": 2}, seed=0)
+    assert f0["entry_row"].tolist() == [7]
+    assert f0["entry"].iloc[0] == pytest.approx(55)            # BBB's close, not its 50 open
+    assert f0["exit_reason"].iloc[0] == "time exit"            # its 45 low came before the close buy

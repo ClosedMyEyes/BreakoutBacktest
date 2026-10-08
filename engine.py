@@ -3,15 +3,20 @@ Trade engine: daily-bar fill model, exits, F0 baseline, portfolio, metrics
 ==========================================================================
 Fill model (plan 4.5)
   Signal timing     computed at day t close; orders work on day t+1
-  Breakout buy stop fill at pivot + slippage; if day t+1 opens above the pivot,
-                    fill at the open + slippage. Skip if the open is more than
-                    max_chase % above the pivot.
-  Volume timing b   enter at the close of the breakout day if its volume >=
-                    vol_mult x 50-day average (daily bars only show full-day
-                    volume, so this is slightly optimistic: see the plan note)
-  Volume timing c   same condition, enter at the next day's open
+  entry_at=close    (default; plan timing b) buy at the close of the first day
+                    that closes above the pivot, as you would with a market-on-
+                    close order a few minutes before the bell. Skip if that close
+                    is more than max_chase % above the pivot. With vol_mult > 0
+                    that day's volume must be >= vol_mult x the 50-day average
+                    (daily bars show full-day volume, so the volume check is
+                    slightly optimistic: see the plan note). F6 buys at the close
+                    of the retest day.
+  entry_at=stop     (plan timing a) buy stop at the pivot + slippage; if day t+1
+                    opens above the pivot, fill at the open + slippage. Skip if the
+                    open is more than max_chase % above the pivot.
+  entry_at=next_open (plan timing c) same condition as close, buy the next open
   Stop hit          exit at stop - slippage; if it opens below, at open - slippage
-  Entry + stop      same day: assume the stop was hit
+  Entry + stop      same day (buy-stop or open fills only): see entry_day_stop
   Stop + target     same day: assume the stop was hit (order unknown)
   Target hit        exit at target - slippage; if it opens above, at open - slippage
   Close-based exits (trailing average, time stop) exit at the next open
@@ -136,38 +141,34 @@ def find_entries(panel, setups, entry_p):
     t1 = t + 1
     piv = pivot[t]
     mc = entry_p["max_chase"] / 100.0
-    timing = entry_p["vol_timing"]
+    entry_at = entry_p["entry_at"]
+    zeros, ones = np.zeros(len(t), dtype=bool), np.ones(len(t), dtype=bool)
 
-    broke = h[t1] > piv
-    if setups.get("entry") == "open":              # F6: market order at the next open
-        ok = np.ones(len(t), dtype=bool)
-        entry_row = t1
-        raw = o[t1]
-        at_close = np.zeros(len(t), dtype=bool)
-    elif timing == "a":
-        ok = broke & (o[t1] <= piv * (1 + mc))
-        entry_row = t1
-        raw = np.maximum(o[t1], piv)
-        at_close = np.zeros(len(t), dtype=bool)
-    else:
-        vol_ok = panel.col("vol_ratio")[t1] >= entry_p["vol_mult"]
-        conf = broke & (c[t1] > piv) & vol_ok
-        if timing == "b":
+    if setups.get("entry") == "open":              # F6: the signal day itself is the trigger
+        ok = ones
+        if entry_at == "close":
+            entry_row, raw, at_close = t, c[t], ones
+        else:
+            entry_row, raw, at_close = t1, o[t1], zeros
+    elif entry_at == "stop":
+        ok = (h[t1] > piv) & (o[t1] <= piv * (1 + mc))
+        entry_row, raw, at_close = t1, np.maximum(o[t1], piv), zeros
+    elif entry_at in ("close", "next_open"):
+        conf = c[t1] > piv
+        if entry_p["vol_mult"] > 0:
+            conf &= panel.col("vol_ratio")[t1] >= entry_p["vol_mult"]
+        if entry_at == "close":
             ok = conf & (c[t1] <= piv * (1 + mc))
-            entry_row = t1
-            raw = c[t1]
-            at_close = np.ones(len(t), dtype=bool)
-        elif timing == "c":
+            entry_row, raw, at_close = t1, c[t1], ones
+        else:
             has2 = np.zeros(len(t), dtype=bool)
             inside = t1 < n
             has2[inside] = panel.has_next[t1[inside]]
             t2 = np.where(has2, t1 + 1, t1)
             ok = conf & has2 & (o[t2] <= piv * (1 + mc))
-            entry_row = t2
-            raw = o[t2]
-            at_close = np.zeros(len(t), dtype=bool)
-        else:
-            raise ValueError(f"vol_timing must be a, b or c, not {timing!r}")
+            entry_row, raw, at_close = t2, o[t2], zeros
+    else:
+        raise ValueError(f"entry_at must be close, stop or next_open, not {entry_at!r}")
     ok &= np.isfinite(raw)
     return {
         "signal_row": t[ok], "entry_row": entry_row[ok], "entry_raw": raw[ok],
@@ -333,6 +334,7 @@ def run_signals(panel, cand, exit_p, signal_start=None, signal_end=None, family=
         if tr is None:
             continue
         tr["signal_row"] = cand["signal_row"][k]
+        tr["at_close"] = bool(cand["at_close"][k])
         busy_until[s] = tr["exit_row"]
         trades.append(tr)
     return to_frame(panel, trades, family)
@@ -356,8 +358,9 @@ def to_frame(panel, trades, family):
 
 def run_f0(panel, base_mask, family_trades, exit_p, seed):
     """For every family trade, pick a random stock that passed the same
-    universe + template filter on the same signal day and enter it at the next
-    open, with the same risk % as the family trade. Same exits."""
+    universe + template filter on the same signal day and buy it on the same
+    entry day at the same time of day (the close, or the open), with the same
+    risk % as the family trade. Same exits."""
     if family_trades.empty:
         return pd.DataFrame()
     rng = np.random.default_rng(seed)
@@ -370,6 +373,9 @@ def run_f0(panel, base_mask, family_trades, exit_p, seed):
     lo = np.searchsorted(pool_dates, sig, side="left")
     hi = np.searchsorted(pool_dates, sig, side="right")
     risk = ft["R_pct"].to_numpy() / 100.0
+    offset = (ft["entry_row"] - ft["signal_row"]).to_numpy()     # 0, 1 or 2 bars after the signal
+    at_close = ft["at_close"].to_numpy() if "at_close" in ft else np.zeros(len(ft), dtype=bool)
+    n_rows = len(panel.sym)
 
     busy_until = {}
     trades = []
@@ -379,15 +385,17 @@ def run_f0(panel, base_mask, family_trades, exit_p, seed):
             continue
         for _try in range(5):
             r = pool_rows[lo[j] + rng.integers(n)]
-            if r + 1 > busy_until.get(panel.sym[r], -1):
+            ie = r + offset[j]
+            if ie < n_rows and panel.sym[ie] == panel.sym[r] and ie > busy_until.get(panel.sym[r], -1):
                 break
         else:
             continue
-        ie = r + 1
-        tr = simulate_trade(panel, ie, panel.o[ie], False, np.nan, exit_p, risk_pct_override=risk[j])
+        raw = panel.c[ie] if at_close[j] else panel.o[ie]
+        tr = simulate_trade(panel, ie, raw, bool(at_close[j]), np.nan, exit_p, risk_pct_override=risk[j])
         if tr is None:
             continue
         tr["signal_row"] = r
+        tr["at_close"] = bool(at_close[j])
         busy_until[panel.sym[r]] = tr["exit_row"]
         trades.append(tr)
     return to_frame(panel, trades, "f0")

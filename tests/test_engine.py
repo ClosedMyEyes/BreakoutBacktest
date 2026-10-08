@@ -139,9 +139,9 @@ def test_buy_stop_fill_and_chase_rules():
     pn = panel_from(bars)
     setups = {"setup": np.array([True, False, False]), "pivot": np.array([100.0, np.nan, np.nan]),
               "stop": np.full(3, np.nan)}
-    cand = engine.find_entries(pn, setups, {"max_chase": 5.0, "vol_timing": "a", "vol_mult": 0})
+    cand = engine.find_entries(pn, setups, {"max_chase": 5.0, "entry_at": "stop", "vol_mult": 0})
     assert cand["entry_raw"][0] == pytest.approx(102)          # open above pivot -> open
-    cand = engine.find_entries(pn, setups, {"max_chase": 1.0, "vol_timing": "a", "vol_mult": 0})
+    cand = engine.find_entries(pn, setups, {"max_chase": 1.0, "entry_at": "stop", "vol_mult": 0})
     assert len(cand["entry_raw"]) == 0                          # 2% above pivot > 1% chase
 
 
@@ -153,21 +153,21 @@ def test_buy_stop_needs_high_above_pivot_and_same_symbol():
     pn = engine.Panel(df, set())
     setups = {"setup": np.array([True, True, False]), "pivot": np.array([100.0, 100.0, np.nan]),
               "stop": np.full(3, np.nan)}
-    cand = engine.find_entries(pn, setups, {"max_chase": 5.0, "vol_timing": "a", "vol_mult": 0})
+    cand = engine.find_entries(pn, setups, {"max_chase": 5.0, "entry_at": "stop", "vol_mult": 0})
     assert len(cand["entry_row"]) == 0    # AAA never trades above 100; row 1 can't use BBB's bar
 
 
-def test_volume_timing_b_and_c():
+def test_entry_at_close_and_next_open():
     bars = [(95, 100, 94, 99), (101, 104, 100, 103), (104, 105, 103, 104), FLAT]
     vol = np.array([1.0, 2.0, 1.0, 1.0])
     pn = panel_from(bars, extra={"vol_ratio": vol})
     setups = {"setup": np.array([True, False, False, False]),
               "pivot": np.array([100.0, np.nan, np.nan, np.nan]), "stop": np.full(4, np.nan)}
-    b = engine.find_entries(pn, setups, {"max_chase": 5.0, "vol_timing": "b", "vol_mult": 1.5})
+    b = engine.find_entries(pn, setups, {"max_chase": 5.0, "entry_at": "close", "vol_mult": 1.5})
     assert b["entry_row"][0] == 1 and b["entry_raw"][0] == pytest.approx(103) and b["at_close"][0]
-    c = engine.find_entries(pn, setups, {"max_chase": 5.0, "vol_timing": "c", "vol_mult": 1.5})
+    c = engine.find_entries(pn, setups, {"max_chase": 5.0, "entry_at": "next_open", "vol_mult": 1.5})
     assert c["entry_row"][0] == 2 and c["entry_raw"][0] == pytest.approx(104)
-    none = engine.find_entries(pn, setups, {"max_chase": 5.0, "vol_timing": "b", "vol_mult": 2.5})
+    none = engine.find_entries(pn, setups, {"max_chase": 5.0, "entry_at": "close", "vol_mult": 2.5})
     assert len(none["entry_row"]) == 0
 
 
@@ -177,7 +177,7 @@ def test_one_position_per_symbol():
     setup = np.zeros(len(bars), dtype=bool)
     setup[[0, 2]] = True
     setups = {"setup": setup, "pivot": np.where(setup, 100.0, np.nan), "stop": np.full(len(bars), np.nan)}
-    cand = engine.find_entries(pn, setups, {"max_chase": 5.0, "vol_timing": "a", "vol_mult": 0})
+    cand = engine.find_entries(pn, setups, {"max_chase": 5.0, "entry_at": "stop", "vol_mult": 0})
     trades = engine.run_signals(pn, cand, {**BASE, "exit": "time", "time_bars": 5})
     assert len(trades) == 1
 
