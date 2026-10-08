@@ -154,7 +154,9 @@ def sanity_checks(prices, symbols_df, market):
     })
     n_adj, n_brk = int(adj_day.sum()), int(brk.sum())
     print(f"\nSplit / adjustment days: {n_adj}. Adjusted close smooth on {int((adj_day & ~brk).sum())}.")
-    print(f"Price breaks: {n_brk} on {table.loc[brk, 'symbol'].nunique()} stocks "
+    listed = (prices["listed"] == 1).to_numpy()
+    print(f"Price breaks: {n_brk} on {table.loc[brk, 'symbol'].nunique()} stocks, "
+          f"{int((brk & listed).sum())} of them while listed "
           f"({int((adj_day & brk).sum())} adjustment days where the adjusted close still jumped "
           f">{config.BREAK_MOVE_PCT:.0f}%, {int((~adj_day & brk).sum())} other 10x / -90% bars).")
     print(f"These stocks get no new entries for {rules.UNIVERSE_DEFAULTS['block_after_break']} bars "

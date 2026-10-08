@@ -281,9 +281,11 @@ def main():
     lab_writer.close()
 
     since = pq.read_table(config.FEATURES_FILE, columns=["bars_since_break"]).column(0).to_pandas()
-    hit = since == 0
-    print(f"Price breaks: {int(hit.sum())} on {pd.Series(sym_col[hit.to_numpy()]).nunique()} stocks; "
-          f"each blocks new entries for the next block_after_break bars")
+    hit = (since == 0).to_numpy()
+    on_list = hit & (prices_tbl.column("listed").to_numpy() == 1)
+    print(f"Price breaks: {int(on_list.sum())} on {pd.Series(sym_col[on_list]).nunique()} stocks while listed "
+          f"(+{int((hit & ~on_list).sum())} on OTC bars, which never get entries anyway). "
+          f"Each blocks new entries for block_after_break bars.")
 
     print("Ranking RS and liquidity across the market...")
     ranks = build_ranks(prices_tbl, config.FEATURES_FILE)
