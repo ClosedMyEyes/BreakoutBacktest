@@ -49,6 +49,18 @@ def test_entry_day_stop_counts_as_hit():
     assert t["bars_held"] == 0
 
 
+@pytest.mark.parametrize("bar,mode,stopped", [
+    ((96, 104, 92, 103), "path",  False),   # green: dip to 92 came before the 100 fill
+    ((96, 104, 92, 103), "touch", True),
+    ((99, 104, 92, 95),  "path",  True),    # red: up through 100 first, then down to 92
+    ((96, 104, 90, 92),  "path",  True),    # closed at the stop: hit after the fill either way
+])
+def test_entry_day_stop_after_intraday_fill(bar, mode, stopped):
+    pn = panel_from([FLAT, bar, FLAT, FLAT])
+    t = trade(pn, exit="time", time_bars=2, entry_day_stop=mode)
+    assert (t["exit_reason"] == "stopped (entry day)") == stopped
+
+
 def test_entry_at_close_skips_entry_day_stop():
     pn = panel_from([FLAT, (100, 101, 92, 100), FLAT, FLAT])
     t = trade(pn, exit="time", time_bars=2, at_close=True)

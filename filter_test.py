@@ -52,12 +52,22 @@ def by_date_stats(df, mask, col):
     return sub.groupby("date")[col].mean()
 
 
-def tstat_nonoverlap(series, step):
-    s = series.dropna()
-    s = s.iloc[::max(1, step)]
-    if len(s) < 3 or s.std() == 0:
-        return None, len(s)
-    return float(s.mean() / (s.std(ddof=1) / np.sqrt(len(s)))), len(s)
+def tstat_overlap(series, h):
+    """t-stat of the mean of a daily series of h-day forward returns, which
+    overlap. Newey-West standard error with h lags, so overlapping days don't
+    count as independent. Returns (t, number of non-overlapping h-day periods)."""
+    x = series.dropna().to_numpy(np.float64)
+    n = len(x)
+    n_indep = n // max(1, h)
+    if n_indep < 3:
+        return None, n_indep
+    e = x - x.mean()
+    var = e @ e / n
+    for k in range(1, min(h, n - 1) + 1):
+        var += 2 * (1 - k / (h + 1)) * (e[k:] @ e[:-k]) / n
+    if var <= 0:
+        return None, n_indep
+    return float(x.mean() / np.sqrt(var / n)), n_indep
 
 
 def spx_forward(market):
@@ -85,7 +95,7 @@ def main():
     df["pass"] = passed
 
     # First-day-passing: passes today, did not pass on the symbol's previous row
-    prev = df.groupby("symbol", observed=True)["pass"].shift(1).fillna(False).astype(bool)
+    prev = df.groupby("symbol", observed=True)["pass"].shift(1, fill_value=False).astype(bool)
     df["first_day"] = df["pass"] & ~prev
 
     big = args.big_winner_pct / 100
@@ -107,7 +117,7 @@ def main():
         sp = by_date_stats(df, p_mask, col)
         sf = by_date_stats(df, f_mask, col)
         edge = (sp - sf).dropna()
-        t, n = tstat_nonoverlap(edge, h)
+        t, n = tstat_overlap(edge, h)
         res[f"fwd{h}_pass"] = round(float(sp.mean() * 100), 3)
         res[f"fwd{h}_fail"] = round(float(sf.mean() * 100), 3)
         res[f"edge{h}"] = round(float(edge.mean() * 100), 3)

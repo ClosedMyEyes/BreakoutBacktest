@@ -58,6 +58,11 @@ EXIT_DEFAULTS = {
     "ts_bars":       0,         # X5: exit if not up ts_min_gain % after ts_bars (0 = off)
     "ts_min_gain":   5.0,
     "max_hold":      252,
+    "entry_day_stop": "path",   # buy-stop filled intraday and the day's low is at the stop:
+                                # path = assume a green bar went open-low-high-close (low came
+                                # before the fill, not stopped) and a red bar open-high-low-close
+                                # (stopped); touch = always stopped (harsh: F0 enters at the
+                                # open and never faces this, so touch biases edge_R down)
     "slippage_pct":  config.DEFAULT_SLIPPAGE_PCT,
     "commission":    config.COMMISSION_PER_SHARE,
 }
@@ -208,8 +213,12 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
     def fill_down(px):
         return px * (1 - slip) - comm
 
-    # Entry bar: a stop touched after a buy-stop entry counts as hit
-    if not at_close and l[i_entry] <= stop:
+    # Entry bar. After an open fill, a low at the stop came after the fill: stopped.
+    # After an intraday buy-stop fill the low may have come first; see entry_day_stop.
+    entry_day_hit = not at_close and l[i_entry] <= stop
+    if entry_day_hit and entry_raw > o[i_entry] and p["entry_day_stop"] == "path":
+        entry_day_hit = c[i_entry] < o[i_entry] or c[i_entry] <= stop
+    if entry_day_hit:
         exit_px, reason = fill_down(stop), "stopped (entry day)"
     else:
         i = i_entry
@@ -522,7 +531,7 @@ def portfolio_metrics(curve, market=None):
     if market is not None and "spx_close" in market:
         m = market.set_index("date")["spx_close"].reindex(curve["date"]).ffill().dropna()
         if len(m) > 1:
-            out["spx_cagr"] = round(((m.iloc[-1] / m.iloc[0]) ** (1 / years) - 1) * 100, 2)
+            out["spx_cagr"] = round(float((m.iloc[-1] / m.iloc[0]) ** (1 / years) - 1) * 100, 2)
             out["spx_max_dd_pct"] = round(float((m / m.cummax() - 1).min() * 100), 2)
     return out
 

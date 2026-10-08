@@ -110,9 +110,13 @@ def main():
         print("\nBy year:")
         print(engine.yearly_table(trades).to_string())
     if curve is not None and len(curve):
-        yearly = curve.set_index("date")["equity"].resample("YE").last().pct_change() * 100
-        print("\nPortfolio return by year (%):")
-        print(yearly.round(1).dropna().to_string())
+        eq = curve.set_index("date")["equity"]
+        year_end = eq.groupby(eq.index.year).last()
+        start = year_end.shift(1).fillna(P["capital"])
+        yearly = ((year_end / start - 1) * 100).round(1)
+        yearly.index.name = "year"
+        print("\nPortfolio return by year (%, first and last years are partial):")
+        print(yearly.to_string())
     print(f"\nDone in {time.time() - t0:.1f}s")
 
 

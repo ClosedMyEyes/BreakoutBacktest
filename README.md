@@ -95,7 +95,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
   same signal days, same risk, same exits.
 - **Count the tries.** `grid.py` logs the number of combinations to the research log, and the walk-forward
   report shows train vs test so the honest (test) number is always next to the flattering one.
-- **Mode A statistics by date** with t-stats over non-overlapping periods.
+- **Mode A statistics by date** with Newey-West t-stats, so overlapping forward windows are not counted as independent.
 
 ## Speed and memory (measured on synthetic data at about 40% of the real size)
 
