@@ -20,6 +20,12 @@ Candidates
   spx_vol         S&P 500 21-day realized volatility (annualized %)
   pct_above200    % of stocks above their 200-day
   feedback20      average R of the family's last 20 trades closed before the signal day
+  vix             VIX close (from FRED, the St. Louis Fed's free data site)
+  fed_funds       effective Fed funds rate (FRED)
+  fed_change_12m  change in the Fed funds rate over the past year: + = hiking, - = cutting
+  yield_curve     10-year minus 3-month Treasury yield; below 0 = inverted (FRED)
+                  FRED series are downloaded once into store/macro.csv (--refresh-macro
+                  to update) and used with a one-day lag, as published values arrive late.
 
 Many candidates on one trade log will find something by luck. Pick one with a
 reason, then check it in walk-forward windows and the holdout.
@@ -30,11 +36,13 @@ HOW TO RUN:
 """
 
 import argparse
+import os
 import time
 
 import numpy as np
 import pandas as pd
 
+import config
 import datastore
 import rules
 
@@ -42,10 +50,48 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--trades", required=True, help="Trade log from setup_trend.py --save-trades")
 parser.add_argument("--min-history", type=int, default=252, help="Days of history before a level counts")
 parser.add_argument("--feedback-n", type=int, default=20, help="Closed trades in the feedback average")
+parser.add_argument("--refresh-macro", action="store_true", help="Download the FRED series again")
 args = parser.parse_args()
 
 P = {}   # rule defaults: the same tradable universe and template as the setups
 LAG = 63
+FRED = {"vix": "VIXCLS", "fed_funds": "DFF", "t10y": "DGS10", "t3m": "DGS3MO"}
+MACRO_FILE = os.path.join(config.DATA_DIR, "macro.csv")
+
+
+def load_macro():
+    """Daily VIX and interest rates from FRED, cached in the store. None if offline."""
+    if os.path.exists(MACRO_FILE) and not args.refresh_macro:
+        return pd.read_csv(MACRO_FILE, parse_dates=["date"])
+    parts = []
+    for name, sid in FRED.items():
+        try:
+            s = pd.read_csv(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}")
+        except Exception as e:
+            print(f"  Couldn't download {sid} from FRED ({e}); VIX and rate indicators skipped")
+            return None
+        s.columns = ["date", name]
+        s["date"] = pd.to_datetime(s["date"])
+        s[name] = pd.to_numeric(s[name], errors="coerce")      # FRED marks holidays with "."
+        parts.append(s.set_index("date"))
+    m = pd.concat(parts, axis=1).sort_index().reset_index()
+    m.to_csv(MACRO_FILE, index=False)
+    return m
+
+
+def macro_regimes(days):
+    """FRED indicators on the trading calendar, each day using the previous day's values."""
+    m = load_macro()
+    if m is None:
+        return pd.DataFrame(index=days)
+    m = m.set_index("date").sort_index().ffill()
+    m = m.reindex(m.index.union(days)).ffill().reindex(days).shift(1)
+    return pd.DataFrame({
+        "vix": m["vix"],
+        "fed_funds": m["fed_funds"],
+        "fed_change_12m": m["fed_funds"] - m["fed_funds"].shift(252),
+        "yield_curve": m["t10y"] - m["t3m"],
+    }, index=days)
 
 
 def daily_regimes():
@@ -94,7 +140,8 @@ def daily_regimes():
     m = datastore.load_market(["spx_close", "pct_above200"]).set_index("date")
     out["spx_vol"] = m["spx_close"].pct_change().rolling(21).std() * np.sqrt(252) * 100
     out["pct_above200"] = m["pct_above200"]
-    return out.sort_index()
+    out = out.sort_index()
+    return out.join(macro_regimes(out.index))
 
 
 def feedback(trades, n):
