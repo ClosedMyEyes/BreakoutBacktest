@@ -239,3 +239,12 @@ def test_no_entry_on_or_right_after_a_bad_bar():
     pn = panel_from(bars, extra={"bad_bar": [0, 1, 0, 0]})
     assert trade(pn, i_entry=1, exit="x1") is None and trade(pn, i_entry=2, exit="x1") is None
     assert trade(pn, i_entry=3, exit="x1") is not None
+
+
+def test_commission_is_per_printed_share():
+    bars = [FLAT, FLAT, (104, 106, 103, 105)]
+    p = {**BASE, "exit": "time", "time_bars": 1, "stop_pct": 0, "commission": 0.01}
+    split = panel_from(bars, extra={"unadj_close": [1000.0] * 3})   # printed 10x the adjusted price
+    plain = panel_from(bars)
+    assert trade(split, **p)["entry"] == pytest.approx(100.001)       # $0.01 on a $1,000 share
+    assert trade(plain, **p)["entry"] == pytest.approx(100.01)

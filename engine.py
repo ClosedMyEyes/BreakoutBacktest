@@ -26,7 +26,11 @@ Fill model (plan 4.5)
                     BREAK_*): an open trade exits at the prior close, and no
                     trade enters on it or the bar after it. Downward breaks are
                     treated as real moves (losses count).
-  Costs             slippage % per side + commission per share on every fill
+  Costs             slippage % per side + commission per share on every fill,
+                    per share that actually traded: prices are adjusted, so the
+                    commission is scaled by that day's adjusted/printed ratio
+                    (a 1999 NVDA share adjusts to a few cents; $0.005 on that
+                    would cost 4% a side)
 
 Results are in R, where R = entry fill - initial stop level.
 
@@ -190,8 +194,14 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
     o, h, l, c = panel.o, panel.h, panel.l, panel.c
     slip = p["slippage_pct"] / 100.0
     comm = p["commission"]
+    unadj = panel.col("unadj_close") if "unadj_close" in panel.df else None
 
-    entry = entry_raw * (1 + slip) + comm
+    def comm_at(k):            # commission per adjusted share on bar k
+        if unadj is None or not unadj[k] > 0:
+            return comm
+        return comm * c[k] / unadj[k]
+
+    entry = entry_raw * (1 + slip) + comm_at(i_entry)
     if risk_pct_override is not None:
         stop = entry * (1 - risk_pct_override)
     elif p["stop_mode"] == "structural":
@@ -231,8 +241,8 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
     raise_stop_to = None       # x2 breakeven: new stop level, applied from the next bar
     exit_px, reason, i = None, None, i_entry
 
-    def fill_down(px):
-        return px * (1 - slip) - comm
+    def fill_down(px):         # a sale on bar i
+        return px * (1 - slip) - comm_at(i)
 
     # Entry bar. After an open fill, a low at the stop came after the fill: stopped.
     # After an intraday buy-stop fill the low may have come first; see entry_day_stop.

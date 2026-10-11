@@ -82,6 +82,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `research_log.py` | Research log (plan 3.8) |
 | `show_data.py` | Raw-data lookups: one stock's bars and adjustment days (`--around DATE` for one trade), name search, delisted list |
 | `check_adjust.py` | One stock's closes around a date under each Norgate adjustment type |
+| `check_pinned.py` | Signal-day range of buyout-pinned trades vs the rest, to set a minimum-range filter |
 | `check_features.py` | Hand checks against TradingView |
 
 ## Guard rails built in
