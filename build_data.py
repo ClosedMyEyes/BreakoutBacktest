@@ -26,7 +26,7 @@ import pandas as pd
 
 import config
 import rules
-from data_sources import NorgateSource, SkipSymbol, SyntheticSource
+from data_sources import NorgateSource, SkipSymbol, SyntheticSource, listed_segments
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--source",  choices=["norgate", "synthetic"], default="norgate")
@@ -57,9 +57,9 @@ def main():
         return
 
     t0 = time.time()
-    price_frames, meta_rows, skipped = [], [], Counter()
+    price_frames, meta_rows, skipped, relisted = [], [], Counter(), 0
 
-    def fetch(sym):
+    def fetch(sym):        # -> (symbol, list of listed runs, skip reason)
         if not src.is_common_stock(sym):
             return sym, None, "not common stock"
         try:
@@ -68,7 +68,10 @@ def main():
             return sym, None, str(e)
         if p is None or len(p) == 0:
             return sym, None, "no prices"
-        return sym, p, None
+        segs = listed_segments(p)
+        if not segs:
+            return sym, None, "never on a major exchange"
+        return sym, segs, None
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = [pool.submit(fetch, s) for s in symbols]
@@ -80,9 +83,14 @@ def main():
                 continue
             if why:
                 skipped[why] += 1
-            else:
-                price_frames.append(p)
-                meta_rows.append(src.symbol_meta(sym, p))
+                continue
+            for seg in p:
+                price_frames.append(seg)
+                meta = src.symbol_meta(sym, seg)
+                meta["symbol"] = str(seg["symbol"].iloc[0])
+                meta_rows.append(meta)
+            if len(p) > 1:
+                relisted += 1
             if i % 500 == 0:
                 print(f"  {i}/{len(symbols)}  ({time.time() - t0:.0f}s)")
 
@@ -94,6 +102,10 @@ def main():
     prices["volume"] = prices["volume"].astype("float64")
 
     symbols_df = pd.DataFrame(meta_rows).sort_values("symbol").reset_index(drop=True)
+    # Delisted = left the exchanges before the data ends (Norgate's delisted
+    # database, or moved to OTC and still trading there)
+    end = prices["date"].max() - pd.Timedelta(days=config.DELISTED_GRACE_DAYS)
+    symbols_df["delisted"] = symbols_df["delisted"] | (pd.to_datetime(symbols_df["last_date"]) < end)
     market = src.market()
 
     prices.to_parquet(config.PRICES_FILE, index=False)
@@ -111,6 +123,7 @@ def main():
     print(f"\nSaved {len(prices):,} rows for {len(symbols_df):,} symbols in {time.time() - t0:.0f}s")
     for k, v in skipped.items():
         print(f"  skipped {v} ({k})")
+    print(f"  {relisted} stocks left the exchanges and came back later; each return is its own symbol (SYMBOL~2)")
     sanity_checks(prices, symbols_df, market)
 
 
@@ -118,8 +131,8 @@ def sanity_checks(prices, symbols_df, market):
     sep = "-" * 60
     print(f"\n{sep}\nSANITY CHECKS (plan Phase 1 'Done when')\n{sep}")
 
-    per_year = prices.groupby(prices["date"].dt.year)["symbol"].nunique()
-    print("Stocks trading per year:")
+    per_year = prices[prices["listed"] == 1].groupby(prices["date"].dt.year)["symbol"].nunique()
+    print("Stocks listed per year:")
     print(per_year.to_string())
 
     print(f"\nDelisted symbols: {int(symbols_df['delisted'].sum()):,} of {len(symbols_df):,}")
@@ -127,16 +140,26 @@ def sanity_checks(prices, symbols_df, market):
     # Missing trading days: compare each symbol's dates against the market calendar
     cal = pd.DatetimeIndex(sorted(market["date"]))
     gaps = []
-    for sym, g in prices[prices["listed"] == 1].groupby("symbol", observed=True):
+    for sym, g in prices.groupby("symbol", observed=True):
         d = pd.DatetimeIndex(g["date"])
         expected = cal[(cal >= d[0]) & (cal <= d[-1])]
         missing = len(expected) - len(d)
         if missing > 5:
             gaps.append((sym, missing))
-    print(f"Symbols missing more than 5 trading days while listed: {len(gaps)}"
+    print(f"Symbols missing more than 5 trading days: {len(gaps)} of {len(symbols_df):,}"
           f"  (thinly traded stocks have no bar on days with no trades)")
     for sym, m in sorted(gaps, key=lambda x: -x[1])[:10]:
         print(f"  {sym}: {m} missing")
+
+    # Calendar check: market days with no stock bars, or far fewer than usual
+    per_day = prices.groupby("date").size()
+    no_bars = cal[(cal >= per_day.index[0]) & (cal <= per_day.index[-1])].difference(per_day.index)
+    usual = per_day.rolling(21, center=True, min_periods=5).median()
+    thin = per_day[per_day < 0.5 * usual]
+    print(f"Market days with no stock bars: {len(no_bars)}"
+          + (f"  e.g. {', '.join(str(d.date()) for d in no_bars[:5])}" if len(no_bars) else ""))
+    print(f"Days with under half the usual number of stocks: {len(thin)}"
+          + (f"  e.g. {', '.join(str(d.date()) for d in thin.index[:5])}" if len(thin) else ""))
 
     # Adjustment spot-checks: days the unadjusted/adjusted ratio moves a lot. That
     # is a split, reverse split or other capital event. The printed price jumps;

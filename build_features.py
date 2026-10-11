@@ -359,7 +359,7 @@ def market_features(market, prices_tbl, feat_path):
     sma200 = pq.read_table(feat_path, columns=["sma200"]).column("sma200").to_pandas()
     close = prices_tbl.column("close").to_pandas()
     date = prices_tbl.column("date").to_pandas()
-    valid = sma200.notna()
+    valid = sma200.notna() & (prices_tbl.column("listed").to_pandas() == 1)
     above = (close > sma200)[valid]
     breadth = above.groupby(date[valid]).mean() * 100
     out = out.merge(breadth.rename("pct_above200").reset_index(), on="date", how="left")

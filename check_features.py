@@ -43,7 +43,7 @@ def show_row(df, sym, date):
         print(f"No row for {sym} on {date}")
         return
     print(f"\n=== {sym}  {pd.Timestamp(date).date()}  "
-          f"https://www.tradingview.com/chart/?symbol={sym.split('-')[0]} ===")
+          f"https://www.tradingview.com/chart/?symbol={sym.split('~')[0].split('-')[0]} ===")
     print(row.T.iloc[:, 0].to_string())
 
 

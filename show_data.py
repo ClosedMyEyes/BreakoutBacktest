@@ -67,7 +67,7 @@ def fmt(df):
 def show_symbol(sym, symbols):
     info = symbols[symbols["symbol"] == sym]
     if info.empty:
-        near = symbols[symbols["symbol"].str.startswith(sym.split("-")[0])]["symbol"].tolist()
+        near = symbols[symbols["symbol"].str.startswith(sym.split("~")[0].split("-")[0])]["symbol"].tolist()
         print(f"{sym} is not in symbols.parquet." + (f" Close matches: {', '.join(near[:10])}" if near else ""))
         return
     print(f"=== {sym} ===")
@@ -88,7 +88,7 @@ def show_symbol(sym, symbols):
 
     print("Last 5 bars:")
     print(fmt(p.tail(5)))
-    print(f"\nTradingView: https://www.tradingview.com/chart/?symbol={sym.split('-')[0]}")
+    print(f"\nTradingView: https://www.tradingview.com/chart/?symbol={sym.split('~')[0].split('-')[0]}")
 
 
 def main():

@@ -75,6 +75,16 @@ CLASSIFICATION_SCHEME = "GICS"
 
 START_DATE = "1990-01-01"
 
+# A stock's history is cut into runs on a major exchange (NYSE / Nasdaq / NYSE
+# American). OTC stretches shorter than this many bars stay inside a run (no
+# entries on those bars); longer ones end it, and OTC bars outside runs are
+# dropped (sub-penny OTC prints are often garbage). A later return to an
+# exchange becomes a new security, SYMBOL~2.
+MAX_OTC_GAP_BARS = 20
+# A symbol whose data ends more than this many days before the last date is
+# treated as delisted: trades and forward returns end at its last price.
+DELISTED_GRACE_DAYS = 14
+
 # =============================================================================
 # FEATURE DEFAULTS (Phase 2)
 # =============================================================================

@@ -47,7 +47,11 @@ def tradable_symbols(universe):
     if not os.path.exists(config.SPLIT_FILE):
         raise FileNotFoundError(f"{config.SPLIT_FILE} missing: run make_split.py first")
     split = pd.read_csv(config.SPLIT_FILE)
-    return set(split.loc[split["split"] == universe, "symbol"])
+    side = dict(zip(split["symbol"].astype(str), split["split"]))
+    # A return to the exchanges (SYMBOL~2) is the same company as SYMBOL, so it
+    # takes SYMBOL's side even if the split file predates it
+    syms = pd.read_parquet(config.SYMBOLS_FILE, columns=["symbol"])["symbol"].astype(str)
+    return {s for s in syms if side.get(s, side.get(s.split("~")[0])) == universe}
 
 
 def _schema_cols(path):

@@ -20,28 +20,32 @@ import pandas as pd
 
 import config
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--force", action="store_true",
-                    help="Overwrite an existing split file (don't, once results have been seen)")
-args = parser.parse_args()
-
 
 def make_split(symbols, seed=config.SPLIT_SEED):
+    """Split by company: a stock that left the exchanges and came back
+    (SYMBOL~2) always lands on the same side as SYMBOL."""
     rng = np.random.default_rng(seed)
-    rows = []
-    for sector, g in symbols.sort_values("symbol").groupby("sector"):
-        syms = g["symbol"].to_numpy().copy()
+    symbols = symbols.assign(base=symbols["symbol"].astype(str).str.split("~").str[0])
+    bases = symbols.sort_values("symbol").drop_duplicates("base")
+    side = {}
+    for sector, g in bases.groupby("sector"):
+        syms = g["base"].to_numpy().copy()
         rng.shuffle(syms)
         # Alternate assignment after shuffling; a random coin decides which half
         # gets the odd one out so neither half is favoured across sectors
         first = "dev" if rng.random() < 0.5 else "holdout"
         second = "holdout" if first == "dev" else "dev"
         for i, s in enumerate(syms):
-            rows.append({"symbol": s, "sector": sector, "split": first if i % 2 == 0 else second})
-    return pd.DataFrame(rows).sort_values("symbol").reset_index(drop=True)
+            side[s] = first if i % 2 == 0 else second
+    out = symbols[["symbol", "sector"]].assign(split=symbols["base"].map(side))
+    return out.sort_values("symbol").reset_index(drop=True)
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true",
+                        help="Overwrite an existing split file (don't, once results have been seen)")
+    args = parser.parse_args()
     if os.path.exists(config.SPLIT_FILE) and not args.force:
         print(f"{config.SPLIT_FILE} already exists and is locked. Use --force only if no results "
               f"have been looked at yet.")

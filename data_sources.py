@@ -28,6 +28,26 @@ import config
 EXCLUDE_NAME_RE = re.compile(r"\b(" + "|".join(config.EXCLUDE_NAME_WORDS) + r")\b")
 
 
+def listed_segments(p, max_gap=None):
+    """Split one symbol's bars into runs on a major exchange (see
+    config.MAX_OTC_GAP_BARS). Returns a list of frames; the first keeps the
+    symbol name, later ones are named SYMBOL~2, SYMBOL~3..."""
+    max_gap = config.MAX_OTC_GAP_BARS if max_gap is None else max_gap
+    rows = np.flatnonzero(p["listed"].to_numpy() == 1)
+    if len(rows) == 0:
+        return []
+    cut = np.flatnonzero(np.diff(rows) - 1 >= max_gap)
+    starts, ends = np.r_[rows[0], rows[cut + 1]], np.r_[rows[cut], rows[-1]]
+    sym = str(p["symbol"].iloc[0])
+    out = []
+    for k, (a, b) in enumerate(zip(starts, ends)):
+        seg = p.iloc[a:b + 1].reset_index(drop=True)
+        if k:
+            seg = seg.assign(symbol=f"{sym}~{k + 1}")
+        out.append(seg)
+    return out
+
+
 class SkipSymbol(Exception):
     """Raised by a source when a symbol should be left out; the message is the reason."""
 
@@ -106,9 +126,8 @@ class NorgateSource:
                 out[col] = np.int8(0)
         # Major-exchange listing (NYSE, Nasdaq, NYSE American...). Drop stocks that
         # never listed on one (OTC-only) and any OTC history before the first listing.
-        # OTC history AFTER a delisting is kept so open trades exit at real prices
-        # (bankruptcies stay real losses); `listed` = 0 there, and the universe
-        # filter never allows new entries on those rows.
+        # build_data.py then cuts the rest into listed runs (listed_segments), so
+        # OTC prints after a delisting never reach the backtest.
         try:
             lst = nd.major_exchange_listed_timeseries(
                 symbol, padding_setting=nd.PaddingType.NONE,
@@ -275,6 +294,16 @@ class SyntheticSource:
         big = rng.random() < 0.3
         for col in config.INDEX_MEMBERSHIP:
             out[col] = np.int8(1 if (col == "in_sp500" and big) else 0)
+        # Some stocks spend time on OTC: a short stretch (stays one security), a
+        # long one (returns as SYMBOL~2), or junk prints after a delisting
+        otc = rng.random()
+        if n > 600 and otc < 0.06:
+            k = int(rng.integers(250, n - 300))
+            out.loc[k:k + (9 if otc < 0.03 else 59), "listed"] = np.int8(0)
+        if delist and rng.random() < 0.3:
+            junk = rng.choice([1e-4, 1e3], size=30)
+            out.loc[n - 30:, ["open", "high", "low", "close", "unadj_close"]] *= junk[:, None]
+            out.loc[n - 30:, "listed"] = np.int8(0)
         return out
 
     def symbol_meta(self, symbol, prices):
