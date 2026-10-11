@@ -24,6 +24,10 @@ Fill model
                     fake gain, so an open short covers at the prior close. A jump
                     up counts as a real loss (up_break=loss) or covers at the prior
                     close too (up_break=exit). No entry on or right after a break.
+  Dividend gaps     a "dividend" over config.DIV_MAX_PCT of the prior close is a data
+                    problem (the full pull found 700% ones), not a payout: it is
+                    treated like a downward break (cover at the prior close, no
+                    entry on or right after it), never charged or booked.
   Costs             slippage % per side and commission per printed share, as on
                     the long side; borrow_pct % a year on the short's value for the
                     calendar days held; every dividend going ex while the short is
@@ -44,6 +48,7 @@ Exit models
 
 import numpy as np
 
+import config
 import engine
 
 EXIT_DEFAULTS = {
@@ -77,11 +82,9 @@ MISSING_DATA_HELP = (
 
 def exit_columns(params):
     p = {**EXIT_DEFAULTS, **{k: v for k, v in params.items() if k in EXIT_DEFAULTS}}
-    cols = ["bad_bar", "bad_bar_dn"]
+    cols = ["bad_bar", "bad_bar_dn", "div"]      # div also flags dividend gaps
     if p["exit"] in ("xs2", "xs3"):
         cols.append(p["trail"])
-    if p["dividends"] == "on":
-        cols.append("div")
     return cols
 
 
@@ -165,10 +168,13 @@ def simulate_short(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
     R = stop - entry
 
     def is_break(name, k):
+        if name == "div_gap":                          # see "Dividend gaps" above
+            return "div" in panel.df and k > 0 and panel.has_next[k - 1] and \
+                panel.col("div")[k] > c[k - 1] * config.DIV_MAX_PCT / 100.0
         return name in panel.df and panel.col(name)[k] == 1
 
     prev_same = i_entry > 0 and panel.has_next[i_entry - 1]
-    for name in ("bad_bar", "bad_bar_dn"):            # junk print on the entry or trigger bar
+    for name in ("bad_bar", "bad_bar_dn", "div_gap"):  # junk print on the entry or trigger bar
         if is_break(name, i_entry) or (prev_same and is_break(name, i_entry - 1)):
             return None
 
@@ -201,6 +207,10 @@ def simulate_short(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
             if is_break("bad_bar_dn", i) or (p["up_break"] == "exit" and is_break("bad_bar", i)):
                 i -= 1                                 # a drop we can't trust: out at the last good close
                 exit_px, reason = fill_up(c[i]), "price break"
+                break
+            if is_break("div_gap", i):
+                i -= 1
+                exit_px, reason = fill_up(c[i]), "dividend gap (data)"
                 break
             bars = i - i_entry
             if pending_open_exit is not None:
