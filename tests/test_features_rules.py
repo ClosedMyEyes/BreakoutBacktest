@@ -163,3 +163,10 @@ def test_forward_returns_spanning_an_upward_break_are_left_out():
     assert lab["fwd20"].iloc[80:100].isna().all()              # window holds the 100x bar
     assert lab["fwdmax60"].iloc[60:100].isna().all()
     assert lab["fwd5"].iloc[148] == pytest.approx(-0.95)       # the crash counts
+
+
+def test_size_other_means_in_no_sp_index():
+    df = pd.DataFrame({"unadj_close": 20.0, "dv_pct": 90.0, "listed": 1, "bars_since_break": np.nan,
+                       "tight_10": 0.05, "in_sp500": [1, 0, 0], "in_sp400": [0, 1, 0], "in_sp600": [0, 0, 0]})
+    assert rules.universe_mask(df, {"size": "other"}).tolist() == [False, False, True]
+    assert rules.universe_mask(df, {"size": "sp400_600"}).tolist() == [False, True, False]

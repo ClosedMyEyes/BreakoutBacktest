@@ -70,13 +70,14 @@ def main():
     stats = engine.signal_metrics(trades)
 
     # F0: date-matched random baseline, several seeds
-    f0_avgs, f0_wins, f0_first = [], [], None
+    f0_avgs, f0_wins, f0_runs = [], [], []
     for seed in range(args.f0_seeds):
         f0 = engine.run_f0(panel, base, trades, P, seed=seed)
         if not f0.empty:
             f0_avgs.append(f0["result_R"].mean())
             f0_wins.append((f0["result_R"] > 0).mean() * 100)
-            f0_first = f0 if f0_first is None else f0_first
+            f0_runs.append(f0)
+    f0_first = f0_runs[0] if f0_runs else None
     if f0_avgs:
         stats["f0_avg_R"] = round(float(np.mean(f0_avgs)), 3)
         stats["f0_min"] = round(float(np.min(f0_avgs)), 3)
@@ -115,6 +116,9 @@ def main():
     if args.mode == "signal" and len(trades):
         print(f"\nExit reasons ({P['family']}, then F0 seed 0 for comparison):")
         print(exit_table(trades, f0_first).to_string())
+        if f0_runs:
+            print("\nEdge over F0 by 5-year block (is it there in every period?):")
+            print(block_table(trades, pd.concat(f0_runs)).to_string())
         print("\nBy year:")
         print(engine.yearly_table(trades).to_string())
         if args.sample:
@@ -128,6 +132,18 @@ def main():
         print("\nPortfolio return by year (%, first and last years are partial):")
         print(yearly.to_string())
     print(f"\nDone in {time.time() - t0:.1f}s")
+
+
+def block_table(trades, f0, years=5):
+    """Average R of the family and of F0 (all seeds) for each block of years."""
+    def by_block(t):
+        y = pd.to_datetime(t["entry_date"]).dt.year
+        return t["result_R"].groupby((y // years) * years)
+    fam, base = by_block(trades), by_block(f0)
+    out = pd.DataFrame({"trades": fam.size(), "avg_R": fam.mean(), "f0_avg_R": base.mean()})
+    out["edge_R"] = out["avg_R"] - out["f0_avg_R"]
+    out.index = [f"{b}-{b + years - 1}" for b in out.index]
+    return out.round(3)
 
 
 def exit_table(trades, f0):
