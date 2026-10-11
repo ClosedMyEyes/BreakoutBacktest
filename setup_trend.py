@@ -18,6 +18,7 @@ HOW TO RUN:
   python setup_trend.py --save-trades results/trades.csv  # trade log for hand checks
   python setup_trend.py --sample 10                       # 10 random trades to check on charts
   python setup_trend.py --sample 10 --sample-reason delisted
+  python setup_trend.py --family f3 --sample 5 --sample-result win    # 5 random winners
 
 Prints GRID_RESULT:<json> with --output-json (used by grid.py).
 """
@@ -45,6 +46,9 @@ parser.add_argument("--monte-carlo", type=int, default=0, help="Trade-order resh
 parser.add_argument("--sample", type=int, default=0, help="Print N random trades to check by hand on a chart")
 parser.add_argument("--sample-reason", type=str, default=None,
                     help="Only sample trades whose exit reason contains this text (e.g. delisted)")
+parser.add_argument("--sample-result", choices=["all", "win", "loss"], default="all",
+                    help="Only sample winning (R > 0) or losing trades")
+parser.add_argument("--sample-seed", type=int, default=0, help="Change to draw a different sample")
 args = parser.parse_args()
 
 P = collect(args, ["universe", "template", "entry", "exit", "portfolio"])
@@ -122,7 +126,8 @@ def main():
         print("\nBy year:")
         print(engine.yearly_table(trades).to_string())
         if args.sample:
-            print_sample(trades, args.sample, args.sample_reason)
+            print_sample(trades, df, setups, args.sample, args.sample_reason, args.sample_result,
+                         args.sample_seed)
     if curve is not None and len(curve):
         eq = curve.set_index("date")["equity"]
         year_end = eq.groupby(eq.index.year).last()
@@ -158,23 +163,32 @@ def exit_table(trades, f0):
     return out.sort_values("trades", ascending=False)
 
 
-def print_sample(trades, n, reason=None):
+def print_sample(trades, df, setups, n, reason=None, result="all", seed=0):
     """Random trades with the actual fill prices (before slippage and
-    commission) so they can be checked on a chart. Prices are split-adjusted."""
+    commission) so they can be checked on a chart, next to the setup's pivot
+    on the signal day (and for F3 its range and volume ratios). Prices are
+    split-adjusted."""
     t = trades if reason is None else trades[trades["exit_reason"].str.contains(reason, regex=False)]
+    if result != "all":
+        t = t[(t["result_R"] > 0) if result == "win" else (t["result_R"] <= 0)]
     if t.empty:
-        print(f"\nNo trades with exit reason containing {reason!r}")
+        print(f"\nNo trades match (exit reason {reason!r}, result {result})")
         return
-    s = t.sample(min(n, len(t)), random_state=0).sort_values("entry_date")
+    s = t.sample(min(n, len(t)), random_state=seed).sort_values("entry_date")
+    sig = s["signal_row"].to_numpy()
     slip, comm = P["slippage_pct"] / 100.0, P["commission"]
     view = pd.DataFrame({
         "symbol": s["symbol"], "signal_day": s["signal_date"].dt.date,
+        "pivot": np.round(setups["pivot"][sig].astype(float), 2),
         "bought": s["entry_date"].dt.date,
         "buy_px": ((s["entry"] - comm) / (1 + slip)).round(2),
-        "stop": s["stop"].round(2), "sold": s["exit_date"].dt.date,
+        "stop": s["stop"].astype(float).round(2), "sold": s["exit_date"].dt.date,
         "sell_px": ((s["exit"] + comm) / (1 - slip)).round(2),
         "reason": s["exit_reason"], "R": s["result_R"].round(2),
     })
+    if P["family"] == "f3":      # how quiet the 10 days before the signal were
+        view.insert(3, "range_ratio", df["atr_ratio"].to_numpy()[sig].round(2))
+        view.insert(4, "vol_ratio", df["vol10_50"].to_numpy()[sig].round(2))
     print(f"\n{len(s)} random trades to check on a chart (split-adjusted prices; "
           f"delisted stocks: python show_data.py SYMBOL):")
     print(view.to_string(index=False))
