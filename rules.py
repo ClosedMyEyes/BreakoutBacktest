@@ -99,15 +99,19 @@ def universe_mask(df, params):
     return m.fillna(False).to_numpy()
 
 
-def price_breaks(sym, close, unadj_close):
-    """True on the bar of a price break (see config.BREAK_*). Uses bars t-1 and t only."""
+def price_breaks(sym, close, unadj_close, up_only=False):
+    """True on the bar of a price break (see config.BREAK_*). Uses bars t-1 and t only.
+    up_only: just the breaks where the adjusted close jumped up (a gain that can't be trusted)."""
     move = close / close.groupby(sym, observed=True).shift(1)
     factor = unadj_close / close
     fj = factor / factor.groupby(sym, observed=True).shift(1)
     adj_day = (fj > config.BREAK_FACTOR_JUMP) | (fj < 1 / config.BREAK_FACTOR_JUMP)
     big = (move - 1).abs() * 100 > config.BREAK_MOVE_PCT
     extreme = (move >= config.BREAK_EXTREME) | (move <= 1 / config.BREAK_EXTREME)
-    return ((adj_day & big) | extreme).fillna(False).to_numpy()
+    brk = (adj_day & big) | extreme
+    if up_only:
+        brk &= move > 1
+    return brk.fillna(False).to_numpy()
 
 
 def template_mask(df, params):

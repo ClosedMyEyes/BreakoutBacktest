@@ -180,6 +180,8 @@ def symbol_features(p):
     brk = pd.Series(price_breaks(p["symbol"], c, p["unadj_close"]), index=p.index)
     last_brk = pos.where(brk).groupby(p["symbol"], observed=True).ffill()
     f["bars_since_break"] = pos - last_brk
+    # Upward price breaks: open trades exit at the prior close (engine.simulate_trade)
+    f["bad_bar"] = price_breaks(p["symbol"], c, p["unadj_close"], up_only=True).astype(np.int8)
 
     for col in f.columns:
         if f[col].dtype == np.float64:
@@ -287,15 +289,22 @@ def symbol_labels(p, delisted_set):
     is_delisted = p["symbol"].astype(str).isin(delisted_set).to_numpy()
     last_close = c.groupby(p["symbol"], observed=True).transform("last")
 
+    # Bars until the next upward price break after t; a window that spans one
+    # holds a gain that can't be trusted, so its forward return is left out
+    bad = pd.Series(price_breaks(p["symbol"], c, p["unadj_close"], up_only=True), index=p.index)
+    nxt = pos.where(bad).groupby(p["symbol"], observed=True).shift(-1)
+    to_bad = (nxt.groupby(p["symbol"], observed=True).bfill() - pos).to_numpy()
+
     lab = pd.DataFrame(index=p.index)
     for hz in config.FORWARD_HORIZONS:
         fut = g_shift(c, -hz, pos, rpos)
         # Delisted stocks that die inside the window exit at their last price
         fill = is_delisted & fut.isna().to_numpy() & (rpos.to_numpy() >= 1)
         fut = fut.where(~fill, last_close)
-        lab[f"fwd{hz}"] = (fut / next_open - 1).astype(F32)
+        lab[f"fwd{hz}"] = (fut / next_open - 1).where(~(to_bad <= hz)).astype(F32)
     hz = max(config.FORWARD_HORIZONS)
-    lab[f"fwdmax{hz}"] = (g_roll_fwd(c, hz, "max", p["symbol"], pos, rpos) / next_open - 1).astype(F32)
+    fmax = g_roll_fwd(c, hz, "max", p["symbol"], pos, rpos) / next_open - 1
+    lab[f"fwdmax{hz}"] = fmax.where(~(to_bad <= hz)).astype(F32)
     return lab
 
 
@@ -404,9 +413,12 @@ def main():
     since = pq.read_table(config.FEATURES_FILE, columns=["bars_since_break"]).column(0).to_pandas()
     hit = (since == 0).to_numpy()
     on_list = hit & (prices_tbl.column("listed").to_numpy() == 1)
+    up = pq.read_table(config.FEATURES_FILE, columns=["bad_bar"]).column(0).to_numpy() == 1
     print(f"Price breaks: {int(on_list.sum())} on {pd.Series(sym_col[on_list]).nunique()} stocks while listed "
           f"(+{int((hit & ~on_list).sum())} on OTC bars, which never get entries anyway). "
           f"Each blocks new entries for block_after_break bars.")
+    print(f"  {int(up.sum())} of them jump up: trades open across one exit at the prior close and Mode A "
+          f"leaves out forward returns that span one. The rest are downward and count as real losses.")
 
     print("Ranking RS and liquidity across the market...")
     ranks = build_ranks(prices_tbl, config.FEATURES_FILE)

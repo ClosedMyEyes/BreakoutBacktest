@@ -224,3 +224,18 @@ def test_breakeven_not_applied_on_the_bar_the_hold_starts():
     pn = panel_from(bars, extra={"sma50": np.full(4, 90.0)})
     t = trade(pn, exit="x2", hold_stop="breakeven")
     assert t["exit_reason"] == "end of data"
+
+
+def test_upward_price_break_exits_at_the_prior_close():
+    bars = [FLAT, FLAT, (104, 106, 103, 105), (9000, 9100, 8900, 9050), FLAT]
+    pn = panel_from(bars, extra={"bad_bar": [0, 0, 0, 1, 0]})
+    t = trade(pn, exit="x1")
+    assert t["exit_reason"] == "price break"
+    assert t["exit"] == pytest.approx(105) and t["exit_row"] == 2
+
+
+def test_no_entry_on_or_right_after_a_bad_bar():
+    bars = [FLAT, (9000, 9100, 8900, 9050), FLAT, FLAT]
+    pn = panel_from(bars, extra={"bad_bar": [0, 1, 0, 0]})
+    assert trade(pn, i_entry=1, exit="x1") is None and trade(pn, i_entry=2, exit="x1") is None
+    assert trade(pn, i_entry=3, exit="x1") is not None

@@ -22,6 +22,10 @@ Fill model (plan 4.5)
   Close-based exits (trailing average, time stop) exit at the next open
   Time exit         exit at the close of bar N
   Delisting         exit at the last traded price; bankruptcies are real losses
+  Price break up    a bar whose jump up can't be trusted (bad_bar, see config
+                    BREAK_*): an open trade exits at the prior close, and no
+                    trade enters on it or the bar after it. Downward breaks are
+                    treated as real moves (losses count).
   Costs             slippage % per side + commission per share on every fill
 
 Results are in R, where R = entry fill - initial stop level.
@@ -81,7 +85,7 @@ NOMINAL_R_PCT = 7.5
 
 def exit_columns(params):
     p = {**EXIT_DEFAULTS, **{k: v for k, v in params.items() if k in EXIT_DEFAULTS}}
-    cols = []
+    cols = ["bad_bar"]
     if p["exit"] in ("x3", "x4"):
         cols.append(p["trail"])
     if p["exit"] == "x2" and p["after_hold"] == "trail50":
@@ -219,6 +223,9 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
         trail = panel.col("sma50")
 
     last = panel.last_row[i_entry]
+    bad = panel.col("bad_bar") if "bad_bar" in panel.df else None
+    if bad is not None and (bad[i_entry] or (i_entry > 0 and panel.has_next[i_entry - 1] and bad[i_entry - 1])):
+        return None            # entry or its trigger bar is a junk print
     hold_until = -1            # x2: set once the fast-gain hold starts; target is off from then on
     pending_open_exit = None   # reason, when a close-based rule fired yesterday
     raise_stop_to = None       # x2 breakeven: new stop level, applied from the next bar
@@ -242,6 +249,10 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
                 exit_px = fill_down(c[i])
                 break
             i += 1
+            if bad is not None and bad[i]:            # jump up we can't trust: out at the last good close
+                i -= 1
+                exit_px, reason = fill_down(c[i]), "price break"
+                break
             bars = i - i_entry
             if raise_stop_to is not None:
                 stop, raise_stop_to = max(stop, raise_stop_to), None

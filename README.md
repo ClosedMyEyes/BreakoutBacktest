@@ -92,7 +92,9 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
   on the same Dev/Holdout side as `SYMBOL`. Data ending 14+ days before the last date counts as delisted.
 - **Price breaks.** Where old and new price history don't connect (a bankruptcy exit, de-SPAC or micro-cap
   reverse split where the adjusted close still jumps, or any 10x / -90% bar), the stock gets no new entries
-  for 252 bars, because its moving averages and 52-week range span two different securities.
+  for 252 bars, because its moving averages and 52-week range span two different securities. A break that
+  jumps UP is never booked as a gain: a trade open across it exits at the prior close, and Mode A leaves out
+  forward returns that span it. Downward breaks count as real losses, so any error is on the conservative side.
 - **Holdout lock.** `holdout` and `all` universes refuse to load without `--unlock-holdout`.
 - **Date-matched F0.** Every Mode B run reports `f0_avg_R` and `edge_R`: random template stocks on the
   same signal days, same risk, same exits.

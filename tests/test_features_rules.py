@@ -138,3 +138,21 @@ def test_extreme_bar_is_a_break_without_adjustment():
     close = np.where(np.arange(100) < 50, 1.0, 12.0)          # 12x with no factor change
     f = bf.symbol_features(one_stock(close, close))
     assert f["bars_since_break"].iloc[50] == 0
+
+
+def test_upward_break_is_a_bad_bar_downward_is_not():
+    i = np.arange(200)
+    close = np.where(i < 100, 10.0, np.where(i < 150, 1000.0, 50.0))   # 100x up, then -95%
+    f = bf.symbol_features(one_stock(close, close))
+    assert f["bars_since_break"].iloc[100] == 0 and f["bars_since_break"].iloc[150] == 0
+    assert np.flatnonzero(f["bad_bar"].to_numpy()).tolist() == [100]
+
+
+def test_forward_returns_spanning_an_upward_break_are_left_out():
+    i = np.arange(200)
+    close = np.where(i < 100, 10.0, np.where(i < 150, 1000.0, 50.0))
+    lab = bf.symbol_labels(one_stock(close, close), delisted_set=set())
+    assert lab["fwd20"].iloc[:80].notna().all()                # window ends before the jump
+    assert lab["fwd20"].iloc[80:100].isna().all()              # window holds the 100x bar
+    assert lab["fwdmax60"].iloc[60:100].isna().all()
+    assert lab["fwd5"].iloc[148] == pytest.approx(-0.95)       # the crash counts

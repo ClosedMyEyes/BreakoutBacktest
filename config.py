@@ -115,6 +115,10 @@ FLAG_WINDOW   = FLAG_MAX_BARS + max(POLE_BARS)
 # de-SPAC) or a micro-cap reverse split. Indicators that look back across the
 # break are meaningless, so rules.universe_mask blocks new entries for
 # `block_after_break` bars afterwards.
+# An UPWARD break can't be trusted as a gain (PME +229,900% in one day on the
+# full pull), so a trade open across one exits at the prior close and Mode A
+# forward returns spanning one are left out. Downward breaks count as real
+# losses, which keeps the error on the conservative side.
 BREAK_FACTOR_JUMP = 1.4     # factor moves by more than 1.4x either way
 BREAK_MOVE_PCT    = 25.0
 BREAK_EXTREME     = 10.0

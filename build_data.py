@@ -182,8 +182,10 @@ def sanity_checks(prices, symbols_df, market):
           f"{int((brk & listed).sum())} of them while listed "
           f"({int((adj_day & brk).sum())} adjustment days where the adjusted close still jumped "
           f">{config.BREAK_MOVE_PCT:.0f}%, {int((~adj_day & brk).sum())} other 10x / -90% bars).")
+    up = rules.price_breaks(prices["symbol"], prices["close"], prices["unadj_close"], up_only=True)
     print(f"These stocks get no new entries for {rules.UNIVERSE_DEFAULTS['block_after_break']} bars "
-          f"after the break (rules.py block_after_break).")
+          f"after the break (rules.py block_after_break). {int(up.sum())} breaks jump up: a trade open "
+          f"across one exits at the prior close. The {n_brk - int(up.sum())} downward ones count as real losses.")
     if n_brk:
         b = table[brk]
         print(b.reindex(b["adjusted_chg%"].abs().sort_values(ascending=False).index).head(10).to_string(index=False))
