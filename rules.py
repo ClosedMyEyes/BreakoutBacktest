@@ -33,6 +33,9 @@ UNIVERSE_DEFAULTS = {
     "liq_top_pct": 50.0,    # keep the top X% of stocks by 50-day dollar volume that day
     "size":        "all",   # all / sp500 / sp400 / sp600 / sp400_600
     "block_after_break": 252,  # no new entries for N bars after a price break (0 = off)
+    "min_range10": 2.0,     # skip stocks whose 10-day high-low range is under X% (0 = off): a
+                            # stock pinned at a buyout price. Set from check_pinned.py on the
+                            # F1 log: < 2% caught 45% of pinned trades and 0.1% of the rest
 }
 
 TEMPLATE_DEFAULTS = {
@@ -71,6 +74,8 @@ def universe_columns(p):
     cols += SIZE_COLUMNS[p["size"]] or []
     if p["block_after_break"] > 0:
         cols += ["bars_since_break"]
+    if p["min_range10"] > 0:
+        cols += ["tight_10"]
     return cols
 
 
@@ -96,6 +101,8 @@ def universe_mask(df, params):
         m &= df[cols].max(axis=1) > 0
     if p["block_after_break"] > 0:
         m &= ~(df["bars_since_break"] < p["block_after_break"])     # NaN = never broke
+    if p["min_range10"] > 0:
+        m &= ~(df["tight_10"] * 100 < p["min_range10"])
     return m.fillna(False).to_numpy()
 
 

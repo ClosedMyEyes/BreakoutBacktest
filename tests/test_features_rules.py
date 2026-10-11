@@ -102,8 +102,15 @@ def test_holdout_is_locked():
 
 def test_universe_needs_major_exchange_listing():
     df = pd.DataFrame({"unadj_close": [20.0, 20.0, 3.0], "dv_pct": [90.0, 90.0, 90.0],
-                       "listed": [1, 0, 1], "bars_since_break": [np.nan] * 3})
+                       "listed": [1, 0, 1], "bars_since_break": [np.nan] * 3, "tight_10": [0.05] * 3})
     assert rules.universe_mask(df, {}).tolist() == [True, False, False]
+
+
+def test_universe_skips_stocks_pinned_at_a_buyout_price():
+    df = pd.DataFrame({"unadj_close": 20.0, "dv_pct": 90.0, "listed": 1, "bars_since_break": np.nan,
+                       "tight_10": [0.05, 0.015, np.nan]})     # 5% range, 1.5% range, too new to tell
+    assert rules.universe_mask(df, {}).tolist() == [True, False, True]
+    assert rules.universe_mask(df, {"min_range10": 0}).all()
 
 
 def one_stock(close, unadj):
@@ -128,7 +135,7 @@ def test_price_break_blocks_new_entries():
     f = bf.symbol_features(one_stock(close, unadj))
     s = f["bars_since_break"]
     assert s.iloc[:150].isna().all() and s.iloc[150] == 0 and s.iloc[160] == 10
-    df = pd.DataFrame({"unadj_close": unadj, "dv_pct": 90.0, "listed": 1, "bars_since_break": s})
+    df = pd.DataFrame({"unadj_close": unadj, "dv_pct": 90.0, "listed": 1, "bars_since_break": s, "tight_10": 0.05})
     m = rules.universe_mask(df, {"min_price": 0})
     assert m[:150].all() and not m[150:].any()                # blocked for 252 bars from the break
     assert rules.universe_mask(df, {"min_price": 0, "block_after_break": 0}).all()
