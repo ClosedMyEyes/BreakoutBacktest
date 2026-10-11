@@ -9,6 +9,7 @@ HOW TO RUN:
   python show_data.py ABPO --rows 40    # more bars from the start of its history
   python show_data.py --find lehman     # search names and tickers
   python show_data.py --delisted        # every delisted stock with its last date and price
+  python show_data.py MSA --around 2007-12-05   # the bars either side of a date (check a trade)
 
 Columns in the bar table:
   close        adjusted close (what all features use)
@@ -34,6 +35,7 @@ parser.add_argument("symbol", nargs="?")
 parser.add_argument("--rows", type=int, default=15, help="Bars to show from the start of the history")
 parser.add_argument("--find", type=str, default=None, help="Search symbol names and tickers")
 parser.add_argument("--delisted", action="store_true", help="List every delisted stock")
+parser.add_argument("--around", type=str, default=None, help="Show the bars either side of this date")
 args = parser.parse_args()
 
 pd.set_option("display.width", 200)
@@ -74,6 +76,12 @@ def show_symbol(sym, symbols):
     print(info.T.iloc[:, 0].to_string())
 
     p = bars(sym)
+    if args.around:
+        i = p["date"].searchsorted(pd.Timestamp(args.around))
+        print(f"\nBars around {args.around} (close = adjusted, unadj_close = the price that printed):")
+        print(fmt(p.iloc[max(0, i - args.rows): i + args.rows + 1]))
+        print(f"\nTradingView: https://www.tradingview.com/chart/?symbol={sym.split('~')[0].split('-')[0]}")
+        return
     print(f"\nFirst {min(args.rows, len(p))} of {len(p)} bars:")
     print(fmt(p.head(args.rows)))
 

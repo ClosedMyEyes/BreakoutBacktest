@@ -4,7 +4,7 @@ Data sources for build_data.py
 Two interchangeable sources produce the same three tables:
 
   prices   one row per symbol-day: symbol, date, open, high, low, close, volume
-           (split-adjusted), unadj_close, turnover, index flags (in_sp500, ...)
+           (adjusted per config.PRICE_ADJUST), unadj_close, turnover, index flags
   symbols  one row per symbol: symbol, name, sector, industry, first_date,
            last_date, delisted
   market   one row per day: date, <prefix>_open/high/low/close/volume for each
@@ -92,7 +92,7 @@ class NorgateSource:
         nd = self.nd
         df = nd.price_timeseries(
             symbol,
-            stock_price_adjustment_setting=nd.StockPriceAdjustmentType.CAPITAL,
+            stock_price_adjustment_setting=getattr(nd.StockPriceAdjustmentType, config.PRICE_ADJUST),
             padding_setting=nd.PaddingType.NONE,
             start_date=self.start_date,
             timeseriesformat="pandas-dataframe",
@@ -174,7 +174,7 @@ class NorgateSource:
             try:
                 df = nd.price_timeseries(
                     sym,
-                    stock_price_adjustment_setting=nd.StockPriceAdjustmentType.CAPITAL,
+                    stock_price_adjustment_setting=getattr(nd.StockPriceAdjustmentType, config.PRICE_ADJUST),
                     padding_setting=nd.PaddingType.NONE,
                     start_date=self.start_date,
                     timeseriesformat="pandas-dataframe",

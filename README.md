@@ -38,6 +38,7 @@ The Norgate Data Updater must be running for `build_data.py`.
 ```
 python build_data.py --list-subtypes     # trial week 1: check which security subtypes are common stock,
                                          # then set COMMON_STOCK_SUBTYPES in config.py
+python check_adjust.py ABT 2013-01-02    # spin-offs should not look like crashes (config.PRICE_ADJUST)
 python build_data.py --limit 200         # quick end-to-end check
 python build_data.py                     # full pull (prints the Phase 1 sanity checks)
 python show_data.py ABPO                 # look at one stock's raw bars and adjustment days
@@ -79,7 +80,8 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `setup_trend.py` | Modes B and C |
 | `grid.py` | Your grid runner, extended: windows, walk-forward report, holdout lock, research log |
 | `research_log.py` | Research log (plan 3.8) |
-| `show_data.py` | Raw-data lookups: one stock's bars and adjustment days, name search, delisted list |
+| `show_data.py` | Raw-data lookups: one stock's bars and adjustment days (`--around DATE` for one trade), name search, delisted list |
+| `check_adjust.py` | One stock's closes around a date under each Norgate adjustment type |
 | `check_features.py` | Hand checks against TradingView |
 
 ## Guard rails built in

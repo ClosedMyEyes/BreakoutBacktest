@@ -75,6 +75,15 @@ CLASSIFICATION_SCHEME = "GICS"
 
 START_DATE = "1990-01-01"
 
+# Norgate price adjustment: NONE, CAPITAL, CAPITALSPECIAL or TOTALRETURN.
+# CAPITAL (splits etc. only) left spin-offs and special dividends in the price
+# as one-day crashes: Abbott on the AbbVie spin-off (-50%), Dell on VMware,
+# Domino's 2007 special dividend. Trades held through them booked fake gap
+# losses down to -13R. CAPITALSPECIAL also adjusts for special distributions;
+# ordinary dividends stay out, as the plan says. Check one with
+# python check_adjust.py ABT 2013-01-02
+PRICE_ADJUST = "CAPITALSPECIAL"
+
 # A stock's history is cut into runs on a major exchange (NYSE / Nasdaq / NYSE
 # American). OTC stretches shorter than this many bars stay inside a run (no
 # entries on those bars); longer ones end it, and OTC bars outside runs are
