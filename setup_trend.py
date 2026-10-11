@@ -16,6 +16,8 @@ HOW TO RUN:
   python setup_trend.py --template off --n 20 --exit time --time-bars 20 --stop-pct 0
                                                           # Phase 4 dummy strategy
   python setup_trend.py --save-trades results/trades.csv  # trade log for hand checks
+  python setup_trend.py --sample 10                       # 10 random trades to check on charts
+  python setup_trend.py --sample 10 --sample-reason delisted
 
 Prints GRID_RESULT:<json> with --output-json (used by grid.py).
 """
@@ -40,6 +42,9 @@ parser.add_argument("--mode", choices=["signal", "portfolio"], default="signal")
 parser.add_argument("--f0-seeds", type=int, default=3, help="Random baseline repeats (0 = skip F0)")
 parser.add_argument("--save-trades", type=str, default=None, help="CSV path for the trade log")
 parser.add_argument("--monte-carlo", type=int, default=0, help="Trade-order reshuffles for a drawdown range")
+parser.add_argument("--sample", type=int, default=0, help="Print N random trades to check by hand on a chart")
+parser.add_argument("--sample-reason", type=str, default=None,
+                    help="Only sample trades whose exit reason contains this text (e.g. delisted)")
 args = parser.parse_args()
 
 P = collect(args, ["universe", "template", "entry", "exit", "portfolio"])
@@ -65,15 +70,18 @@ def main():
     stats = engine.signal_metrics(trades)
 
     # F0: date-matched random baseline, several seeds
-    f0_avgs = []
+    f0_avgs, f0_wins, f0_first = [], [], None
     for seed in range(args.f0_seeds):
         f0 = engine.run_f0(panel, base, trades, P, seed=seed)
         if not f0.empty:
             f0_avgs.append(f0["result_R"].mean())
+            f0_wins.append((f0["result_R"] > 0).mean() * 100)
+            f0_first = f0 if f0_first is None else f0_first
     if f0_avgs:
         stats["f0_avg_R"] = round(float(np.mean(f0_avgs)), 3)
         stats["f0_min"] = round(float(np.min(f0_avgs)), 3)
         stats["f0_max"] = round(float(np.max(f0_avgs)), 3)
+        stats["f0_win_rate"] = round(float(np.mean(f0_wins)), 1)
         stats["edge_R"] = round(stats["avg_R"] - stats["f0_avg_R"], 3)
 
     if args.monte_carlo and len(trades):
@@ -105,10 +113,12 @@ def main():
     for k, v in stats.items():
         print(f"  {k:<16}: {v}")
     if args.mode == "signal" and len(trades):
-        print("\nExit reasons:")
-        print(trades["exit_reason"].value_counts().to_string())
+        print(f"\nExit reasons ({P['family']}, then F0 seed 0 for comparison):")
+        print(exit_table(trades, f0_first).to_string())
         print("\nBy year:")
         print(engine.yearly_table(trades).to_string())
+        if args.sample:
+            print_sample(trades, args.sample, args.sample_reason)
     if curve is not None and len(curve):
         eq = curve.set_index("date")["equity"]
         year_end = eq.groupby(eq.index.year).last()
@@ -118,6 +128,40 @@ def main():
         print("\nPortfolio return by year (%, first and last years are partial):")
         print(yearly.to_string())
     print(f"\nDone in {time.time() - t0:.1f}s")
+
+
+def exit_table(trades, f0):
+    """Count, average R and win rate for each exit reason."""
+    def one(t):
+        g = t.groupby("exit_reason")["result_R"]
+        return pd.DataFrame({"trades": g.size(), "avg_R": g.mean().round(2),
+                             "win_rate": (g.apply(lambda r: (r > 0).mean()) * 100).round(1)})
+    out = one(trades)
+    if f0 is not None and len(f0):
+        out = out.join(one(f0).add_prefix("f0_"), how="outer")
+    return out.sort_values("trades", ascending=False)
+
+
+def print_sample(trades, n, reason=None):
+    """Random trades with the actual fill prices (before slippage and
+    commission) so they can be checked on a chart. Prices are split-adjusted."""
+    t = trades if reason is None else trades[trades["exit_reason"].str.contains(reason, regex=False)]
+    if t.empty:
+        print(f"\nNo trades with exit reason containing {reason!r}")
+        return
+    s = t.sample(min(n, len(t)), random_state=0).sort_values("entry_date")
+    slip, comm = P["slippage_pct"] / 100.0, P["commission"]
+    view = pd.DataFrame({
+        "symbol": s["symbol"], "signal_day": s["signal_date"].dt.date,
+        "bought": s["entry_date"].dt.date,
+        "buy_px": ((s["entry"] - comm) / (1 + slip)).round(2),
+        "stop": s["stop"].round(2), "sold": s["exit_date"].dt.date,
+        "sell_px": ((s["exit"] + comm) / (1 - slip)).round(2),
+        "reason": s["exit_reason"], "R": s["result_R"].round(2),
+    })
+    print(f"\n{len(s)} random trades to check on a chart (split-adjusted prices; "
+          f"delisted stocks: python show_data.py SYMBOL):")
+    print(view.to_string(index=False))
 
 
 if __name__ == "__main__":
