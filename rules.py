@@ -132,9 +132,10 @@ def market_mask(dates, market, params):
     return day_ok.reindex(pd.to_datetime(dates).to_numpy()).fillna(False).to_numpy(dtype=bool)
 
 
-def price_breaks(sym, close, unadj_close, up_only=False):
+def price_breaks(sym, close, unadj_close, up_only=False, down_only=False):
     """True on the bar of a price break (see config.BREAK_*). Uses bars t-1 and t only.
-    up_only: just the breaks where the adjusted close jumped up (a gain that can't be trusted)."""
+    up_only: just the breaks where the adjusted close jumped up (a gain that can't be trusted).
+    down_only: just the ones where it dropped (the untrusted gain for a short)."""
     move = close / close.groupby(sym, observed=True).shift(1)
     factor = unadj_close / close
     fj = factor / factor.groupby(sym, observed=True).shift(1)
@@ -144,6 +145,8 @@ def price_breaks(sym, close, unadj_close, up_only=False):
     brk = (adj_day & big) | extreme
     if up_only:
         brk &= move > 1
+    if down_only:
+        brk &= move < 1
     return brk.fillna(False).to_numpy()
 
 

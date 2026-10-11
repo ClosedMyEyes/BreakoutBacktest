@@ -336,7 +336,10 @@ def simulate_trade(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
 # MODE B: every signal taken (one position per symbol at a time)
 # =============================================================================
 
-def run_signals(panel, cand, exit_p, signal_start=None, signal_end=None, family="f1"):
+def run_signals(panel, cand, exit_p, signal_start=None, signal_end=None, family="f1",
+                sim=None):
+    """sim: the one-trade simulator (simulate_trade; engine_short passes its own)."""
+    sim = sim or simulate_trade
     order = np.lexsort((cand["entry_row"], panel.sym[cand["entry_row"]]))
     busy_until = {}
     trades = []
@@ -350,8 +353,8 @@ def run_signals(panel, cand, exit_p, signal_start=None, signal_end=None, family=
         s = panel.sym[ie]
         if ie <= busy_until.get(s, -1):
             continue
-        tr = simulate_trade(panel, ie, cand["entry_raw"][k], cand["at_close"][k],
-                            cand["struct_stop"][k], exit_p)
+        tr = sim(panel, ie, cand["entry_raw"][k], cand["at_close"][k],
+                 cand["struct_stop"][k], exit_p)
         if tr is None:
             continue
         tr["signal_row"] = cand["signal_row"][k]
@@ -377,13 +380,14 @@ def to_frame(panel, trades, family):
 # F0: date-matched random baseline
 # =============================================================================
 
-def run_f0(panel, base_mask, family_trades, exit_p, seed):
+def run_f0(panel, base_mask, family_trades, exit_p, seed, sim=None):
     """For every family trade, pick a random stock that passed the same
     universe + template filter on the same signal day and buy it on the same
     entry day at the same time of day (the close, or the open), with the same
     risk % as the family trade. Same exits."""
     if family_trades.empty:
         return pd.DataFrame()
+    sim = sim or simulate_trade
     rng = np.random.default_rng(seed)
     pool_rows = np.flatnonzero(base_mask & panel.has_next)       # sorted by symbol, then date
     pool_rows = pool_rows[np.argsort(panel.date[pool_rows], kind="stable")]
@@ -412,7 +416,7 @@ def run_f0(panel, base_mask, family_trades, exit_p, seed):
         else:
             continue
         raw = panel.c[ie] if at_close[j] else panel.o[ie]
-        tr = simulate_trade(panel, ie, raw, bool(at_close[j]), np.nan, exit_p, risk_pct_override=risk[j])
+        tr = sim(panel, ie, raw, bool(at_close[j]), np.nan, exit_p, risk_pct_override=risk[j])
         if tr is None:
             continue
         tr["signal_row"] = r

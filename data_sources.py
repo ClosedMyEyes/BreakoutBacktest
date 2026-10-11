@@ -4,7 +4,9 @@ Data sources for build_data.py
 Two interchangeable sources produce the same three tables:
 
   prices   one row per symbol-day: symbol, date, open, high, low, close, volume
-           (adjusted per config.PRICE_ADJUST), unadj_close, turnover, index flags
+           (adjusted per config.PRICE_ADJUST), unadj_close, turnover, div, index flags.
+           div = ordinary dividend going ex that day, in the same adjusted price
+           units as close (a short pays it; prices leave it out)
   symbols  one row per symbol: symbol, name, sector, industry, first_date,
            last_date, delisted
   market   one row per day: date, <prefix>_open/high/low/close/volume for each
@@ -46,6 +48,16 @@ def listed_segments(p, max_gap=None):
             seg = seg.assign(symbol=f"{sym}~{k + 1}")
         out.append(seg)
     return out
+
+
+def dividends_from_total_return(close, tr_close):
+    """Dividend per share on each ex-date, in close's units. Gaps under
+    DIV_MIN_PCT of the price are rounding noise and become 0."""
+    prev_c = np.r_[np.nan, close[:-1]]
+    tr_ret = tr_close / np.r_[np.nan, tr_close[:-1]]
+    div = prev_c * tr_ret - close
+    div = np.where(np.isfinite(div) & (div > close * config.DIV_MIN_PCT / 100), div, 0.0)
+    return div
 
 
 class SkipSymbol(Exception):
@@ -112,6 +124,7 @@ class NorgateSource:
             "turnover":    df[cols["turnover"]].to_numpy()
                            if "turnover" in cols else np.nan,
         })
+        out["div"] = self._dividends(symbol, df[cols["close"]])
         for col, index_name in config.INDEX_MEMBERSHIP.items():
             try:
                 idx = nd.index_constituent_timeseries(
@@ -141,6 +154,23 @@ class NorgateSource:
         out = out.iloc[int(np.argmax(listed == 1)):].reset_index(drop=True)
         out.insert(0, "symbol", symbol)
         return out
+
+    def _dividends(self, symbol, close):
+        """Ordinary dividends from the gap between Norgate's total-return and
+        capital-adjusted closes: total return t/t-1 = (close t + div t) / close t-1."""
+        nd = self.nd
+        try:
+            tr = nd.price_timeseries(
+                symbol,
+                stock_price_adjustment_setting=nd.StockPriceAdjustmentType.TOTALRETURN,
+                padding_setting=nd.PaddingType.NONE,
+                start_date=self.start_date,
+                timeseriesformat="pandas-dataframe",
+            )
+            tr = tr[{c.lower(): c for c in tr.columns}["close"]].reindex(close.index)
+        except Exception:
+            return np.zeros(len(close))
+        return dividends_from_total_return(close.to_numpy(np.float64), tr.to_numpy(np.float64))
 
     def symbol_meta(self, symbol, prices):
         nd = self.nd
@@ -284,12 +314,20 @@ class SyntheticSource:
             k = int(rng.integers(200, n - 100))
             unadj[:k] *= 2.0
 
+        # Quarterly dividends (about 2% a year) for some stocks
+        # (own random stream, so the rest of the fake data is unchanged)
+        drng = np.random.default_rng(zlib.crc32((symbol + "div").encode()))
+        div = np.zeros(n)
+        if drng.random() < 0.4:
+            k = np.arange(int(drng.integers(0, 63)), n, 63)
+            div[k] = close[k] * 0.005
+
         dates = self.dates[start:end]
         out = pd.DataFrame({
             "symbol": symbol, "date": dates,
             "open": openp, "high": high, "low": low, "close": close,
             "volume": volume, "unadj_close": unadj, "turnover": close * volume,
-            "listed": np.int8(1),
+            "div": div, "listed": np.int8(1),
         })
         big = rng.random() < 0.3
         for col in config.INDEX_MEMBERSHIP:

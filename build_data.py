@@ -97,7 +97,7 @@ def main():
     prices = pd.concat(price_frames, ignore_index=True)
     prices = prices.sort_values(["symbol", "date"]).reset_index(drop=True)
     prices["symbol"] = prices["symbol"].astype("category")
-    for c in ["open", "high", "low", "close", "unadj_close", "turnover"]:
+    for c in ["open", "high", "low", "close", "unadj_close", "turnover", "div"]:
         prices[c] = prices[c].astype("float64")
     prices["volume"] = prices["volume"].astype("float64")
 
@@ -190,6 +190,18 @@ def sanity_checks(prices, symbols_df, market):
         b = table[brk]
         print(b.reindex(b["adjusted_chg%"].abs().sort_values(ascending=False).index).head(10).to_string(index=False))
     print("  Look at one with: python show_data.py SYMBOL")
+
+    # Dividends (charged to shorts): ex-dates found from the total-return gap
+    div = prices["div"]
+    has = div > 0
+    yld = (div / prices["close"] * 100)[has]
+    print(f"\nDividend ex-dates: {int(has.sum()):,} on {prices.loc[has, 'symbol'].nunique():,} stocks "
+          f"(median {yld.median():.2f}% of the price)." if has.any() else "\nDividend ex-dates: none found.")
+    if has.any():
+        big = table.loc[has].assign(div=div[has].round(4), yield_pct=yld.round(2))
+        print("Largest as % of the price (check one with python show_data.py SYMBOL --around DATE):")
+        print(big.sort_values("yield_pct", ascending=False).head(10)[["symbol", "date", "div", "yield_pct"]]
+              .to_string(index=False))
 
     print("\nAlso check by hand: known 2008-era bankruptcies (e.g. Lehman, Washington Mutual)")
     print("are present with their final prices: python show_data.py --find lehman")

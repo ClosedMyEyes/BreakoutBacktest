@@ -7,7 +7,8 @@ once per data refresh.
 Writes four row-aligned or per-day files to config.DATA_DIR:
   features.parquet         per-symbol indicators (same row order as prices.parquet)
   ranks.parquet            cross-sectional RS and liquidity ranks (same row order)
-  labels.parquet           forward returns for Mode A ONLY (same row order).
+  labels.parquet           forward returns for Mode A ONLY (same row order); fwd*_s
+                           are the short side's version (filter_short.py).
                            Kept in a separate file so no rule can read the future
                            by accident (ground rule 3.1).
   market_features.parquet  index trend, distribution days, breadth (one row per day)
@@ -91,10 +92,16 @@ def symbol_features(p):
     for n in [10, 50, 150, 200]:
         f[f"sma{n}"] = g_roll(c, n, "mean", pos)
     f["ema21"] = ema(c, 21, p["symbol"], pos)
+    # Falling lines for the short setups (S3, S4): lower than 5 bars ago
+    f["sma50_dn5"] = (f["sma50"] < g_shift(f["sma50"], 5, pos, rpos)).astype("int8")
+    f["ema21_dn5"] = (f["ema21"] < g_shift(f["ema21"], 5, pos, rpos)).astype("int8")
 
     # 200-day trend tests (template rule 3 variants)
     for n in [21, 63, 105]:
         f[f"sma200_up{n}"] = (f["sma200"] > g_shift(f["sma200"], n, pos, rpos)).astype("int8")
+    # Short side: the 200-day lower than N days ago (downtrend template rule 3)
+    for n in [21, 63, 105]:
+        f[f"sma200_dn{n}"] = (f["sma200"] < g_shift(f["sma200"], n, pos, rpos)).astype("int8")
     up1 = (f["sma200"] > g_shift(f["sma200"], 1, pos, rpos))
     run_id = (~up1).cumsum()
     f["sma200_rising_days"] = up1.groupby(run_id).cumsum().astype("int16")
@@ -166,6 +173,38 @@ def symbol_features(p):
         lw = g_roll(l, wb + 1, "min", pos).to_numpy()
         f[f"pole_low{wb}"] = np.where(has, lw[top_row], np.nan)
 
+    # S2 bear flag (the F5 mirror): flag bottom = lowest low of the last
+    # FLAG_WINDOW bars, age = bars since it, flag high = highest high since it,
+    # pole high = highest high in the POLE_BARS before the bottom, and the
+    # flag's average volume / the pole's
+    bot = g_roll(l, config.FLAG_WINDOW, "min", pos)
+    bage = pd.Series(np.nan, index=p.index)
+    for a in range(config.FLAG_MAX_BARS + 1):
+        bage[(g_shift(l, a, pos, rpos) == bot) & bage.isna()] = a
+    bflag_high = pd.Series(np.nan, index=p.index)
+    for a in range(config.FLAG_MAX_BARS + 1):
+        m = bage == a
+        if m.any():
+            bflag_high[m] = g_roll(h, a + 1, "max", pos)[m]
+    f["bflag_bot"] = bot.where(bage.notna())
+    f["bflag_age"] = bage
+    f["bflag_high"] = bflag_high
+    bagev = bage.to_numpy()
+    bhas = ~np.isnan(bagev)
+    rows = np.arange(len(p))
+    bot_row = rows - np.where(bhas, bagev, 0).astype(np.int64)
+    cv = np.r_[0.0, np.cumsum(np.nan_to_num(v.to_numpy(np.float64)))]
+    posv = pos.to_numpy()
+    with np.errstate(invalid="ignore", divide="ignore"):
+        flag_avg = (cv[rows + 1] - cv[bot_row + 1]) / np.where(bagev > 0, bagev, np.nan)
+        for wb in config.POLE_BARS:
+            hw = g_roll(h, wb + 1, "max", pos).to_numpy()
+            f[f"bpole_high{wb}"] = np.where(bhas, hw[bot_row], np.nan)
+            first = np.maximum(bot_row - wb, 0)
+            pole_avg = (cv[bot_row + 1] - cv[first]) / (wb + 1)
+            ok = bhas & (posv - np.where(bhas, bagev, 0) >= wb)       # pole inside this symbol
+            f[f"bflag_volr{wb}"] = np.where(ok, flag_avg / pole_avg, np.nan)
+
     # F4 full VCP: swing points and the last four contractions
     starts = np.flatnonzero(pos.to_numpy() == 0)
     for z in config.VCP_SWING_PCTS:
@@ -182,6 +221,8 @@ def symbol_features(p):
     f["bars_since_break"] = pos - last_brk
     # Upward price breaks: open trades exit at the prior close (engine.simulate_trade)
     f["bad_bar"] = price_breaks(p["symbol"], c, p["unadj_close"], up_only=True).astype(np.int8)
+    # Downward price breaks: the untrusted gain for a short (engine_short.simulate_short)
+    f["bad_bar_dn"] = price_breaks(p["symbol"], c, p["unadj_close"], down_only=True).astype(np.int8)
 
     for col in f.columns:
         if f[col].dtype == np.float64:
@@ -302,6 +343,17 @@ def symbol_labels(p, delisted_set):
         fill = is_delisted & fut.isna().to_numpy() & (rpos.to_numpy() >= 1)
         fut = fut.where(~fill, last_close)
         lab[f"fwd{hz}"] = (fut / next_open - 1).where(~(to_bad <= hz)).astype(F32)
+    # Short side (filter_short.py): the same returns, but a window spanning a
+    # DOWNWARD break is left out instead (that drop is the gain a short can't
+    # trust); upward breaks count, as real losses
+    bad_dn = pd.Series(price_breaks(p["symbol"], c, p["unadj_close"], down_only=True), index=p.index)
+    nxt_dn = pos.where(bad_dn).groupby(p["symbol"], observed=True).shift(-1)
+    to_dn = (nxt_dn.groupby(p["symbol"], observed=True).bfill() - pos).to_numpy()
+    for hz in config.FORWARD_HORIZONS:
+        fut = g_shift(c, -hz, pos, rpos)
+        fill = is_delisted & fut.isna().to_numpy() & (rpos.to_numpy() >= 1)
+        fut = fut.where(~fill, last_close)
+        lab[f"fwd{hz}_s"] = (fut / next_open - 1).where(~(to_dn <= hz)).astype(F32)
     hz = max(config.FORWARD_HORIZONS)
     fmax = g_roll_fwd(c, hz, "max", p["symbol"], pos, rpos) / next_open - 1
     lab[f"fwdmax{hz}"] = fmax.where(~(to_bad <= hz)).astype(F32)
@@ -334,6 +386,23 @@ def build_ranks(prices_tbl, feat_path):
     # Dollar-volume percentile 0-100 across every listed stock trading that day
     ranks["dv_pct"] = (feats["dv50"].where(listed).groupby(date).rank(pct=True) * 100).astype(F32)
     return ranks
+
+
+def bars_since_leader(prices_tbl, feat_path, ranks):
+    """Bars since the stock last passed the long Trend Template at its default
+    settings (NaN = never). The short side's former-leader rule uses it."""
+    from rules import template_columns, template_mask
+    tcols = [c for c in template_columns({}) if c not in ranks]
+    df = pq.read_table(feat_path, columns=[c for c in tcols if c != "close"]).to_pandas()
+    df["close"] = prices_tbl.column("close").to_pandas()
+    for c in template_columns({}):
+        if c in ranks:
+            df[c] = ranks[c].to_numpy()
+    passed = template_mask(df, {}) & (prices_tbl.column("listed").to_numpy() == 1)
+    sym = prices_tbl.column("symbol").to_pandas().astype(str)
+    pos = sym.groupby(sym).cumcount()
+    last = pos.where(passed).groupby(sym).ffill()
+    return (pos - last).astype(F32).to_numpy()
 
 
 # =============================================================================
@@ -418,10 +487,14 @@ def main():
           f"(+{int((hit & ~on_list).sum())} on OTC bars, which never get entries anyway). "
           f"Each blocks new entries for block_after_break bars.")
     print(f"  {int(up.sum())} of them jump up: trades open across one exit at the prior close and Mode A "
-          f"leaves out forward returns that span one. The rest are downward and count as real losses.")
+          f"leaves out forward returns that span one. The rest are downward and count as real losses "
+          f"for longs; for shorts it's the other way round (engine_short.py).")
 
     print("Ranking RS and liquidity across the market...")
     ranks = build_ranks(prices_tbl, config.FEATURES_FILE)
+
+    print("Former leaders (bars since each stock last passed the long Trend Template)...")
+    ranks["bars_since_leader"] = bars_since_leader(prices_tbl, config.FEATURES_FILE, ranks)
     ranks.to_parquet(config.RANKS_FILE, index=False)
 
     print("Market features...")

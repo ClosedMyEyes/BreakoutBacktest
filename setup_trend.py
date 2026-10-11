@@ -36,6 +36,7 @@ import datastore
 import engine
 import rules
 from params import add_param_flags, add_run_flags, collect
+from reports import block_table, exit_table
 
 parser = argparse.ArgumentParser()
 add_param_flags(parser, ["universe", "template", "entry", "exit", "portfolio"])
@@ -140,30 +141,6 @@ def main():
         print("\nPortfolio return by year (%, first and last years are partial):")
         print(yearly.to_string())
     print(f"\nDone in {time.time() - t0:.1f}s")
-
-
-def block_table(trades, f0, years=5):
-    """Average R of the family and of F0 (all seeds) for each block of years."""
-    def by_block(t):
-        y = pd.to_datetime(t["entry_date"]).dt.year
-        return t["result_R"].groupby((y // years) * years)
-    fam, base = by_block(trades), by_block(f0)
-    out = pd.DataFrame({"trades": fam.size(), "avg_R": fam.mean(), "f0_avg_R": base.mean()})
-    out["edge_R"] = out["avg_R"] - out["f0_avg_R"]
-    out.index = [f"{b}-{b + years - 1}" for b in out.index]
-    return out.round(3)
-
-
-def exit_table(trades, f0):
-    """Count, average R and win rate for each exit reason."""
-    def one(t):
-        g = t.groupby("exit_reason")["result_R"]
-        return pd.DataFrame({"trades": g.size(), "avg_R": g.mean().round(2),
-                             "win_rate": (g.apply(lambda r: (r > 0).mean()) * 100).round(1)})
-    out = one(trades)
-    if f0 is not None and len(f0):
-        out = out.join(one(f0).add_prefix("f0_"), how="outer")
-    return out.sort_values("trades", ascending=False)
 
 
 def print_sample(trades, df, setups, n, reason=None, result="all", seed=0):

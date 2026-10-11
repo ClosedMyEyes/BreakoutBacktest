@@ -6,7 +6,8 @@ every combination of PARAM_GRID runs in parallel as a subprocess, each run
 prints GRID_RESULT:<json>, results are sorted in the terminal and saved to CSV.
 
 HOW TO USE:
-  1. Pick BACKTESTER_FILE: filter_test.py (Mode A) or setup_trend.py (Modes B, C)
+  1. Pick BACKTESTER_FILE: filter_test.py (Mode A) or setup_trend.py (Modes B, C);
+     for the short side filter_short.py or setup_short.py (log its runs as phases S5-S12)
   2. Edit PARAM_GRID and FIXED_ARGS below
   3. Run: python grid.py
 
@@ -110,6 +111,9 @@ PARAM_GRID = {
 # RUNNER — no need to edit below this line
 # =============================================================================
 
+MODE_B_SCRIPTS = ("setup_trend.py", "setup_short.py")
+
+
 def to_flag(key):
     return "--" + key.lower().replace("_", "-")
 
@@ -125,7 +129,7 @@ def combo_to_cli_args(param_combo):
 def base_cli():
     cli = []
     for key, val in FIXED_ARGS.items():
-        if key in ("MODE", "F0_SEEDS") and BACKTESTER_FILE != "setup_trend.py":
+        if key in ("MODE", "F0_SEEDS") and BACKTESTER_FILE not in MODE_B_SCRIPTS:
             continue
         cli += [to_flag(key), str(val)]
     if UNLOCK_HOLDOUT:
@@ -236,10 +240,11 @@ def main():
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 60)
     pd.set_option("display.float_format", "{:.3f}".format)
-    stat_pref = ["window", "trades", "signals", "taken", "win_rate", "avg_R", "median_R", "f0_avg_R",
+    stat_pref = ["window", "trades", "signals", "taken", "win_rate", "avg_R", "median_R", "f0_avg_R", "s0_avg_R",
                  "edge_R", "payoff", "total_R", "max_dd", "R_per_DD", "top10_share", "avg_hold",
                  "cagr", "max_dd_pct", "mar", "sharpe",
-                 "pass_rate", "edge5", "edge20", "t20", "edge60", "t60", "big_winner_pass"]
+                 "pass_rate", "edge5", "edge20", "t20", "edge60", "t60", "big_winner_pass",
+                 "short_edge5", "short_edge20", "short_edge60"]
     show = keys + [c for c in stat_pref if c in df.columns]
     print("\n" + "=" * 60)
     print(f"RESULTS  (sorted by {SORT_METRIC}; runs under {MIN_TRADES} trades sorted last)")
@@ -258,11 +263,11 @@ def main():
         print(f"\nBEST COMBINATION (by {SORT_METRIC}):")
         for k in keys:
             print(f"  {k} = {best[k]}")
-        for m in ["trades", "avg_R", "edge_R", "f0_avg_R", "total_R", "max_dd", "mar", "edge20", "t20"]:
+        for m in ["trades", "avg_R", "edge_R", "f0_avg_R", "s0_avg_R", "total_R", "max_dd", "mar", "edge20", "t20"]:
             if m in best and pd.notna(best[m]):
                 print(f"  → {m:<9}: {best[m]}")
         summary = {k: best[k] for k in keys} | {SORT_METRIC: best[SORT_METRIC]}
-        if SAVE_TOP_TRADES and BACKTESTER_FILE == "setup_trend.py" and not folds:
+        if SAVE_TOP_TRADES and BACKTESTER_FILE in MODE_B_SCRIPTS and not folds:
             save_top_trades(good, keys, backtester_path)
 
     research_log.append(

@@ -1,7 +1,7 @@
 # BreakoutBacktest
 
 Backtest and (later) nightly scanner for the O'Neil / Minervini long-side Trend Template
-system. It follows the build plan in `Trend_Template_System_Plan.docx` (project files):
+system, and a separate short side (see "Short side" below). It follows the build plan in `Trend_Template_System_Plan.docx` (project files):
 phases, ground rules and decisions are referenced by number in the code.
 
 This is a separate program from Stockbot and never runs inside the live trading process.
@@ -22,8 +22,44 @@ This is a separate program from Stockbot and never runs inside the live trading 
 | 9–11 | Market light, fundamentals, earnings dates | Market features computed; rules to do |
 | 12–14 | Holdout run, scanner, forward test | To do |
 
-Nothing has been run on real data yet. Every number produced so far comes from synthetic data and
-means nothing about the strategy.
+The long side is parked (best version: `--family f3 --stop-mode structural --market above200`).
+
+## Short side
+
+Follows the Short Side Plan doc. It is kept apart from the long side: its own rules (`rules_short.py`),
+engine (`engine_short.py`), scripts (`setup_short.py`, `filter_short.py`) and defaults, so no long result
+moves. The long scripts never import the short files.
+
+| Setup | Short when | Stop |
+|---|---|---|
+| S1 simple breakdown | close below the N-day low (`--n 20/50`) | N-day high |
+| S2 bear flag | drop of D% in W weeks, light-volume bounce of 5+ bars taking back at most R%; close below the flag low | flag high |
+| S3 failed leader | a former leader (passed the long template in the past year) closes below a falling 50-day on V x volume; short that close | 10-day high |
+| S4 rally into resistance | high within X% of a falling 50-day / 21-day EMA, closes below it and down; short that close | that day's high |
+| S5 quiet breakdown | the F3 mirror: ATR10 <= r x ATR50, vol10 <= v x vol50; close below the 10-day low | 10-day high |
+| S0 | random downtrend-template stocks on the same days, same time of day, risk % and exits | |
+
+- Pool: printed price $10+, top 30% by dollar volume, the downtrend template (Minervini's eight rules
+  mirrored, RS 30 or lower; `--former-leader on` adds the leader rule), and the S&P 500 below its 200-day
+  (`--market below200`, the default; `downtrend` = also below a falling 50-day; `off`). S3 uses the
+  former-leader pool without the template (few leaders pass it the day they break the 50-day);
+  `--s3-template on` adds it.
+- Exit XS2: stop 7.5% above the entry (or `--stop-mode structural`, skipped if over 15%), cover at 20%
+  profit; down 20% within 3 weeks switches the target off and covers after a close above the 21-day EMA;
+  cover after 60 bars at most.
+- Costs: slippage and commission as on the long side, borrow 0.5% a year (`--borrow-pct 3` to test),
+  and every dividend going ex while short (the `div` column from Norgate's total-return gap).
+- Price breaks are flipped: a downward break is the gain a short can't trust (covers at the prior close),
+  an upward one counts as a loss (`--up-break exit` to treat it like a downward one).
+
+```
+python filter_short.py --breakdowns          # Mode A: do downtrend-template stocks keep falling?
+python setup_short.py                        # S1 vs S0, S&P below its 200-day
+python setup_short.py --family s5 --market off
+python setup_short.py --family s3 --sample 10 --sample-result loss
+```
+
+Short-side Mode C (portfolio) is not built yet.
 
 ## Setup (Windows machine with Norgate)
 
@@ -74,6 +110,11 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `make_split.py` | Phase 3 Dev/Holdout split |
 | `datastore.py` | Loads only the columns and rows a run needs; holds the Holdout lock |
 | `rules.py` | Universe filter, Trend Template, entry families. Shared with the future scanner |
+| `rules_short.py` | Short side: universe, downtrend template, market filter, setups S1-S5 |
+| `engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
+| `setup_short.py` | Short side Mode B: one setup vs S0 |
+| `filter_short.py` | Short side Mode A |
+| `reports.py` | Statistics and tables shared by the long and short scripts |
 | `engine.py` | Fill model, exits, F0 baseline, portfolio, metrics |
 | `params.py` | Turns every rule default into a CLI flag so `grid.py` keys map onto them |
 | `filter_test.py` | Mode A |
@@ -126,4 +167,4 @@ python -m pytest tests
 ```
 
 Hand-built price paths cover every fill and exit rule, the eight template rules, no look-ahead, forward labels,
-the Holdout lock and portfolio accounting.
+the Holdout lock and portfolio accounting; `tests/test_short.py` does the same for the short side.

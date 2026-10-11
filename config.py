@@ -94,6 +94,11 @@ MAX_OTC_GAP_BARS = 20
 # treated as delisted: trades and forward returns end at its last price.
 DELISTED_GRACE_DAYS = 14
 
+# Ordinary dividends (a short pays them) come from the gap between Norgate's
+# TOTALRETURN and PRICE_ADJUST closes. Gaps under this % of the price are
+# rounding noise.
+DIV_MIN_PCT = 0.01
+
 # =============================================================================
 # FEATURE DEFAULTS (Phase 2)
 # =============================================================================
