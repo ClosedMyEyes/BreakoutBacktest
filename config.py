@@ -98,6 +98,10 @@ DELISTED_GRACE_DAYS = 14
 # TOTALRETURN and PRICE_ADJUST closes. Gaps under this % of the price are
 # rounding noise.
 DIV_MIN_PCT = 0.01
+# A gap over this % of the prior close is a data problem, not a payout (the full
+# pull's largest were 100-700%: EPIX 2025-08-25, GLDFY 2000-07-12). Shorts treat
+# it like a price break (engine_short.py).
+DIV_MAX_PCT = 25.0
 
 # =============================================================================
 # FEATURE DEFAULTS (Phase 2)

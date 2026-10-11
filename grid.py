@@ -59,7 +59,7 @@ PHASE           = "6"
 FIXED_ARGS = {                        # passed to every run
     "UNIVERSE":    "dev",
     "MODE":        "signal",          # signal (Mode B) / portfolio (Mode C); setup_trend.py only
-    "F0_SEEDS":    5,
+    "F0_SEEDS":    5,                 # S0 seeds on the short side
 }
 UNLOCK_HOLDOUT  = False               # Phase 12 only
 
@@ -106,6 +106,28 @@ PARAM_GRID = {
     # "RISK_PCT":        [0.5, 0.75, 1.0],
     # "RANK_BY":         ["rs", "tight", "random"],
 }
+
+# ── Short side (Short Side Plan) ─────────────────────────────────────────────
+# SIDE = "short" swaps in the settings below; "long" uses the ones above.
+SIDE = "short"
+SHORT = {
+    "BACKTESTER_FILE": "setup_short.py",       # or "filter_short.py" for Mode A
+    "QUESTION":        "Plan S5 kill test: every short setup vs date-matched S0, "
+                       "in any market and with the S&P 500 below its 200-day",
+    "PHASE":           "S5",                   # short phases are logged S5-S12
+    "NUM_WORKERS":     2,                      # S6/S7 build big arrays: keep RAM in check
+    "PARAM_GRID": {
+        "FAMILY":      ["s1", "s2", "s3", "s4", "s5", "s6", "s7"],
+        "MARKET":      ["off", "below200"],
+        # "N":           [20, 50],                                  # S1
+        # "BORROW_PCT":  [0.5, 3.0],
+        # "POOL":        ["auto", "on", "off"],
+        # "MAX_RS":      [30, 10],
+    },
+}
+if SIDE == "short":
+    BACKTESTER_FILE, QUESTION, PHASE, NUM_WORKERS, PARAM_GRID = (
+        SHORT[k] for k in ["BACKTESTER_FILE", "QUESTION", "PHASE", "NUM_WORKERS", "PARAM_GRID"])
 
 # =============================================================================
 # RUNNER — no need to edit below this line

@@ -198,6 +198,8 @@ def sanity_checks(prices, symbols_df, market):
     print(f"\nDividend ex-dates: {int(has.sum()):,} on {prices.loc[has, 'symbol'].nunique():,} stocks "
           f"(median {yld.median():.2f}% of the price)." if has.any() else "\nDividend ex-dates: none found.")
     if has.any():
+        print(f"{int((yld > config.DIV_MAX_PCT).sum())} are over {config.DIV_MAX_PCT:.0f}% of the price: "
+              f"data problems, not payouts; shorts treat them like price breaks (engine_short.py).")
         big = table.loc[has].assign(div=div[has].round(4), yield_pct=yld.round(2))
         print("Largest as % of the price (check one with python show_data.py SYMBOL --around DATE):")
         print(big.sort_values("yield_pct", ascending=False).head(10)[["symbol", "date", "div", "yield_pct"]]

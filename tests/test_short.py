@@ -126,6 +126,20 @@ def test_dividends_off():
     assert t["div_paid"] == 0 and t["result_R"] == pytest.approx(0)
 
 
+def test_huge_dividend_is_a_data_gap_not_a_payout():
+    div = np.array([0, 0, 0, 30.0, 0, 0])              # 30% of the price: not a real dividend
+    t = short(pn([FLAT, FLAT, (100, 101, 97, 98), (70, 71, 69, 70), FLAT, FLAT], div=div), exit="xs3")
+    assert t["exit_reason"] == "dividend gap (data)"
+    assert t["exit"] == pytest.approx(98) and t["div_paid"] == 0
+    for dividends in ["on", "off"]:                     # no entry on or right after one
+        assert short(pn([FLAT] * 5, div=np.array([0, 0, 30.0, 0, 0])), i_entry=2,
+                     dividends=dividends) is None
+        assert short(pn([FLAT] * 5, div=np.array([0, 0, 30.0, 0, 0])), i_entry=3,
+                     dividends=dividends) is None
+    t = short(pn([FLAT] * 6, div=np.array([0, 0, 20.0, 0, 0, 0])), exit="time", time_bars=3)
+    assert t["div_paid"] == pytest.approx(20)           # 20% is charged as a dividend
+
+
 def test_borrow_charged_by_calendar_day():
     t = short(pn([FLAT] * 10), exit="time", time_bars=5, borrow_pct=3.65)
     days = 7                                            # 5 business days span a weekend
