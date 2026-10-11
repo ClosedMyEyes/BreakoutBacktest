@@ -170,3 +170,15 @@ def test_size_other_means_in_no_sp_index():
                        "tight_10": 0.05, "in_sp500": [1, 0, 0], "in_sp400": [0, 1, 0], "in_sp600": [0, 0, 0]})
     assert rules.universe_mask(df, {"size": "other"}).tolist() == [False, False, True]
     assert rules.universe_mask(df, {"size": "sp400_600"}).tolist() == [False, True, False]
+
+
+def test_market_light_uses_the_signal_days_sp500_state():
+    market = pd.DataFrame({
+        "date": pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06"]),
+        "spx_above200": [1, 1, 0], "spx_above50": [1, 0, 1], "spx_sma50_rising": [1, 1, 1]})
+    dates = pd.Series(pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-02", "2020-01-07"]))
+    assert rules.market_columns({}) == []
+    above = rules.market_mask(dates, market, {"market": "above200"})
+    assert above.tolist() == [True, True, False, True, False]     # unknown day = no entry
+    trend = rules.market_mask(dates, market, {"market": "trend"})
+    assert trend.tolist() == [True, False, False, True, False]

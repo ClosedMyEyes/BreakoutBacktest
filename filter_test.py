@@ -89,6 +89,8 @@ def main():
     df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
     uni = rules.universe_mask(df, P)
+    if rules.market_columns(P):
+        uni = uni & rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
     tmpl = rules.template_mask(df, P)
     df = df.loc[uni].reset_index(drop=True)
     passed = tmpl[uni]

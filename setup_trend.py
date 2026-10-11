@@ -19,6 +19,7 @@ HOW TO RUN:
   python setup_trend.py --sample 10                       # 10 random trades to check on charts
   python setup_trend.py --sample 10 --sample-reason delisted
   python setup_trend.py --family f3 --sample 5 --sample-result win    # 5 random winners
+  python setup_trend.py --family f3 --market trend        # only while the S&P 500 is in an uptrend
 
 Prints GRID_RESULT:<json> with --output-json (used by grid.py).
 """
@@ -68,6 +69,8 @@ def main():
         print(f"Loaded {len(df):,} rows, {df['symbol'].nunique():,} symbols ({time.time() - t0:.1f}s)")
 
     base = rules.universe_mask(df, P) & rules.template_mask(df, P)
+    if rules.market_columns(P):          # market light: no new entries (F0 too) on red days
+        base &= rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
     setups = rules.entry_setups(df, P, base)
     cand = engine.find_entries(panel, setups, P)
     trades = engine.run_signals(panel, cand, P, args.start, args.end, family=P["family"])

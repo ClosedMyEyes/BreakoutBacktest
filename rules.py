@@ -10,6 +10,7 @@ day t+1. Forward-return columns are never read here.
 
 Contents
   universe_mask     price / liquidity / size filters, price-break block
+  market_mask       market light: new entries only while the S&P 500 is in an uptrend
   price_breaks      days where old and new price history don't connect
   template_mask     Minervini's Trend Template (8 rules, with the Mode A knobs)
   entry setups      F1 simple breakout, F2 tightness (VCP v1), F3 volatility
@@ -36,6 +37,14 @@ UNIVERSE_DEFAULTS = {
     "min_range10": 2.0,     # skip stocks whose 10-day high-low range is under X% (0 = off): a
                             # stock pinned at a buyout price. Set from check_pinned.py on the
                             # F1 log: < 2% caught 45% of pinned trades and 0.1% of the rest
+    "market":      "off",   # off / above200 = S&P 500 above its 200-day on the signal day /
+                            # trend = also above a rising 50-day (plan Phase 9 "Trend")
+}
+
+MARKET_RULES = {
+    "off":      [],
+    "above200": ["spx_above200"],
+    "trend":    ["spx_above200", "spx_above50", "spx_sma50_rising"],
 }
 
 TEMPLATE_DEFAULTS = {
@@ -80,6 +89,10 @@ def universe_columns(p):
     return cols
 
 
+def market_columns(p):
+    return MARKET_RULES[with_defaults(p, UNIVERSE_DEFAULTS)["market"]]
+
+
 def template_columns(p):
     p = with_defaults(p, TEMPLATE_DEFAULTS)
     if p["template"] == "off":
@@ -106,6 +119,17 @@ def universe_mask(df, params):
     if p["min_range10"] > 0:
         m &= ~(df["tight_10"] * 100 < p["min_range10"])
     return m.fillna(False).to_numpy()
+
+
+def market_mask(dates, market, params):
+    """True on days the market light lets new entries through, judged on the
+    signal day's close. market: one row per date with the market_columns."""
+    cols = market_columns(params)
+    ok = np.ones(len(market), dtype=bool)
+    for c in cols:
+        ok &= market[c].to_numpy() == 1
+    day_ok = pd.Series(ok, index=pd.to_datetime(market["date"]).to_numpy())
+    return day_ok.reindex(pd.to_datetime(dates).to_numpy()).fillna(False).to_numpy(dtype=bool)
 
 
 def price_breaks(sym, close, unadj_close, up_only=False):
