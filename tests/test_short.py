@@ -236,12 +236,15 @@ def test_market_filter_mirror():
     assert rules_short.market_mask(d, mk, {"market": "off"}).tolist() == [True, True, True]
 
 
-def test_s3_uses_the_former_leader_pool():
+def test_pools():
     tp = rules_short.base_params({"family": "s3"})
     assert tp["template"] == "off" and tp["former_leader"] == "on"
-    tp = rules_short.base_params({"family": "s3", "s3_template": "on"})
-    assert tp["template"] == "on"
-    assert rules_short.base_params({"family": "s1"})["former_leader"] == "off"
+    assert rules_short.base_params({"family": "s3", "pool": "on"})["template"] == "on"
+    for fam in ["s6", "s7"]:
+        assert rules_short.base_params({"family": fam})["template"] == "off"
+    tp = rules_short.base_params({"family": "s1"})
+    assert tp["template"] == "on" and tp["former_leader"] == "off"
+    assert rules_short.base_params({"family": "s1", "pool": "off"})["template"] == "off"
 
 
 # A fall from 100 to 70 in 4 weeks on heavy volume, then a light 6-bar bounce to 78
@@ -300,6 +303,68 @@ def test_s4_rally_into_a_falling_line():
     s = rules_short.entry_setups(df, {"family": "s4", "s4_x": 2}, np.ones(3, bool))
     assert s["setup"].tolist() == [False, False, True]      # high 104 within 2% of 103, closed below, down
     assert s["stop"][2] == 104
+
+
+# S6: flat, a breakout from 100 to 130, a pullback to 109 (70% of the move), a rally
+# back to 129 and a red day that fails just under the peak
+IMPULSE_PATH = [100.0] * 60 + leg(100, 130, 6) + leg(130, 109, 5) + leg(109, 129, 4) + [125.0]
+
+
+def impulse_stock(fail_bar=(129, 129.5, 124.75)):
+    st = stock(IMPULSE_PATH)
+    st.loc[len(st) - 1, ["open", "high", "low"]] = list(fail_bar)
+    return with_features(st)
+
+
+def test_impulse_retest_failure():
+    df = impulse_stock()
+    s = rules_short.entry_setups(df, {"family": "s6"}, np.ones(len(df), bool))
+    assert np.flatnonzero(s["setup"]).tolist() == [len(df) - 1]
+    assert s["entry"] == "signal"
+    peak, low = 130 * 1.002, 100 * 0.998
+    assert s["stop"][-1] == pytest.approx(peak + 0.1 * (peak - low), rel=1e-4)
+
+
+@pytest.mark.parametrize("knobs,bar", [
+    ({"s6_dr_min": 0.8}, None),              # the pullback took back only 70%
+    ({"s6_retest": 0.5}, None),              # the rally stopped 0.8% short of the peak
+    ({"s6_atr": 50}, None),                  # impulse too small for its ATR
+    ({}, (129, 131, 124.75)),                # pushed through the peak: not a failure
+    ({}, (126, 129.5, 124.75)),              # small red body
+])
+def test_impulse_knobs_reject(knobs, bar):
+    df = impulse_stock(bar or (129, 129.5, 124.75))
+    s = rules_short.entry_setups(df, {"family": "s6", **knobs}, np.ones(len(df), bool))
+    assert not s["setup"][-1]
+
+
+# S7: a top at 100 (the 52-week high), a drop and a base, a rally back to 97 (3% under it),
+# then a quiet fade to 93
+FADE_PATH = ([50.0] * 200 + leg(50, 100, 30) + leg(100, 85, 8) + [85.0] * 30 + leg(85, 97, 6)
+             + leg(97, 93, 15))
+
+
+def test_slow_fade():
+    df = with_features(stock(FADE_PATH))
+    s = rules_short.entry_setups(df, {"family": "s7"}, np.ones(len(df), bool))
+    assert s["setup"][-1]
+    assert s["pivot"][-1] == pytest.approx(93 * 0.998, rel=1e-4)     # the fade's low: short below it
+    assert s["stop"][-1] == pytest.approx(df["pivot_10"].iloc[-1])
+
+
+@pytest.mark.parametrize("knobs", [{"s7_x": 2}, {"s7_r": 0.5}, {"s7_min": 15}, {"s7_d_max": 3}])
+def test_slow_fade_knobs_reject(knobs):
+    df = with_features(stock(FADE_PATH))
+    s = rules_short.entry_setups(df, {"family": "s7", **knobs}, np.ones(len(df), bool))
+    assert not s["setup"][-1]
+
+
+def test_lag_stays_inside_a_symbol():
+    sym = np.array([0, 0, 0, 1, 1])
+    x = np.arange(5.0)
+    assert np.allclose(rules_short._lag(x, 1, sym), [np.nan, 0, 1, np.nan, 3], equal_nan=True)
+    assert np.allclose(rules_short._at_age(x, np.array([0, 1, 2, 1, 2]), sym),
+                       [0, 0, 0, np.nan, np.nan], equal_nan=True)
 
 
 # ── Features and labels ──────────────────────────────────────────────────────

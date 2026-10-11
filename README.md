@@ -37,13 +37,15 @@ moves. The long scripts never import the short files.
 | S3 failed leader | a former leader (passed the long template in the past year) closes below a falling 50-day on V x volume; short that close | 10-day high |
 | S4 rally into resistance | high within X% of a falling 50-day / 21-day EMA, closes below it and down; short that close | that day's high |
 | S5 quiet breakdown | the F3 mirror: ATR10 <= r x ATR50, vol10 <= v x vol50; close below the 10-day low | 10-day high |
-| S0 | random downtrend-template stocks on the same days, same time of day, risk % and exits | |
+| S6 impulse retest failure | the daily version of Stockbot's impulse short: a breakout to a peak, a pullback of 60-95% of the move, a rally back to within 3% of the peak and a red day that fails under it; short that close | peak + 10% of the move |
+| S7 slow fade | a top within 5% under the 52-week high (not broken), then a quiet drift 3-15% down; close below the fade's low | 10-day high |
+| S0 | random stocks from the same pool on the same days, same time of day, risk % and exits | |
 
 - Pool: printed price $10+, top 30% by dollar volume, the downtrend template (Minervini's eight rules
   mirrored, RS 30 or lower; `--former-leader on` adds the leader rule), and the S&P 500 below its 200-day
-  (`--market below200`, the default; `downtrend` = also below a falling 50-day; `off`). S3 uses the
-  former-leader pool without the template (few leaders pass it the day they break the 50-day);
-  `--s3-template on` adds it.
+  (`--market below200`, the default; `downtrend` = also below a falling 50-day; `off`). S3, S6 and S7 short stocks that were strong
+  until recently, which rarely pass the template yet, so they skip it (S3 adds the former-leader rule);
+  `--pool on` adds the template, `--pool off` drops it for any setup.
 - Exit XS2: stop 7.5% above the entry (or `--stop-mode structural`, skipped if over 15%), cover at 20%
   profit; down 20% within 3 weeks switches the target off and covers after a close above the 21-day EMA;
   cover after 60 bars at most.

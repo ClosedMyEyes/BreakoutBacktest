@@ -8,7 +8,8 @@ days, same time of day, same risk % and same exits. The edge is avg_R minus
 S0's avg_R.
 
 Setups (rules_short.py): s1 simple breakdown, s2 bear flag, s3 failed leader,
-s4 rally into resistance, s5 quiet breakdown. Exit xs2 by default
+s4 rally into resistance, s5 quiet breakdown, s6 impulse retest failure, s7 slow
+fade. Exit xs2 by default
 (engine_short.py). Costs include borrow (--borrow-pct, % a year) and every
 dividend paid while short.
 
@@ -18,6 +19,8 @@ HOW TO RUN:
   python setup_short.py --family s5 --market off          # any market (for comparison)
   python setup_short.py --family s3 --s3-v 1.8
   python setup_short.py --family s2 --flag-w 8 --flag-d-pct 30
+  python setup_short.py --family s6 --s6-dr-min 0.7          # pullback of at least 70%
+  python setup_short.py --family s7 --pool on                # slow fade, downtrend stocks only
   python setup_short.py --borrow-pct 3                    # costlier borrow
   python setup_short.py --save-trades results/s1.csv
   python setup_short.py --sample 10 --sample-result win   # 10 random winners to check on charts
@@ -158,6 +161,8 @@ def print_sample(trades, setups):
         "cover_px": ((s["exit"] - comm) / (1 + slip)).round(2),
         "divs": s["div_paid"].round(2), "reason": s["exit_reason"], "R": s["result_R"].round(2),
     })
+    if setups.get("entry") == "signal":          # S3, S4, S6 short the signal day's close
+        view = view.drop(columns="trigger")
     print(f"\n{len(s)} random shorts to check on a chart (split-adjusted prices; "
           f"python show_data.py SYMBOL --around DATE):")
     print(view.to_string(index=False))
