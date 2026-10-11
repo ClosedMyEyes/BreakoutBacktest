@@ -33,6 +33,7 @@ import config
 import datastore
 import rules
 from params import add_param_flags, add_run_flags, collect
+from reports import by_date_stats, spx_forward, tstat_overlap
 
 parser = argparse.ArgumentParser()
 add_param_flags(parser, ["universe", "template"])
@@ -44,38 +45,6 @@ args = parser.parse_args()
 P = collect(args, ["universe", "template"])
 H = config.FORWARD_HORIZONS
 HMAX = max(H)
-
-
-def by_date_stats(df, mask, col):
-    """Per-day mean of `col` for rows in mask, then the time series."""
-    sub = df.loc[mask, ["date", col]].dropna()
-    return sub.groupby("date")[col].mean()
-
-
-def tstat_overlap(series, h):
-    """t-stat of the mean of a daily series of h-day forward returns, which
-    overlap. Newey-West standard error with h lags, so overlapping days don't
-    count as independent. Returns (t, number of non-overlapping h-day periods)."""
-    x = series.dropna().to_numpy(np.float64)
-    n = len(x)
-    n_indep = n // max(1, h)
-    if n_indep < 3:
-        return None, n_indep
-    e = x - x.mean()
-    var = e @ e / n
-    for k in range(1, min(h, n - 1) + 1):
-        var += 2 * (1 - k / (h + 1)) * (e[k:] @ e[:-k]) / n
-    if var <= 0:
-        return None, n_indep
-    return float(x.mean() / np.sqrt(var / n)), n_indep
-
-
-def spx_forward(market):
-    m = market.sort_values("date").reset_index(drop=True)
-    out = pd.DataFrame({"date": m["date"]})
-    for h in H:
-        out[f"spx_fwd{h}"] = m["spx_close"].shift(-h) / m["spx_open"].shift(-1) - 1
-    return out
 
 
 def main():

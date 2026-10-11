@@ -8,6 +8,8 @@ you already use.
 
 import argparse
 
+import engine_short
+import rules_short
 from engine import EXIT_DEFAULTS, PORTFOLIO_DEFAULTS
 from rules import ENTRY_DEFAULTS, TEMPLATE_DEFAULTS, UNIVERSE_DEFAULTS
 
@@ -17,6 +19,12 @@ GROUPS = {
     "entry":     ENTRY_DEFAULTS,
     "exit":      EXIT_DEFAULTS,
     "portfolio": PORTFOLIO_DEFAULTS,
+    # Short side: its own tables, so the same flag (e.g. --market) has the
+    # short default in the short scripts and the long default in the long ones
+    "s_universe": rules_short.UNIVERSE_DEFAULTS,
+    "s_template": rules_short.TEMPLATE_DEFAULTS,
+    "s_entry":    rules_short.ENTRY_DEFAULTS,
+    "s_exit":     engine_short.EXIT_DEFAULTS,
 }
 
 

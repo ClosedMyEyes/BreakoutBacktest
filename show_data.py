@@ -48,8 +48,10 @@ def load_symbols():
 
 
 def bars(sym):
-    t = pq.read_table(config.PRICES_FILE, filters=[("symbol", "==", sym)],
-                      columns=["date", "open", "high", "low", "close", "unadj_close", "volume", "listed"])
+    cols = ["date", "open", "high", "low", "close", "unadj_close", "volume", "listed"]
+    if "div" in pq.read_schema(config.PRICES_FILE).names:
+        cols.insert(6, "div")                # dividend going ex that day (shorts pay it)
+    t = pq.read_table(config.PRICES_FILE, filters=[("symbol", "==", sym)], columns=cols)
     p = t.to_pandas().sort_values("date").reset_index(drop=True)
     p["factor"] = p["unadj_close"] / p["close"]
     p["adj_chg%"] = p["close"].pct_change() * 100
