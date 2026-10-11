@@ -50,21 +50,21 @@ import research_log
 # =============================================================================
 
 BACKTESTER_FILE = "setup_trend.py"   # or "filter_test.py" for Mode A
-NUM_WORKERS     = 4
+NUM_WORKERS     = 3
 OUTPUT_CSV      = os.path.join(config.RESULTS_DIR, "grid_results.csv")
-QUESTION        = "Kill test: F1 50-day breakout + X2 vs date-matched F0"   # goes in the research log
-PHASE           = "5.4"
+QUESTION        = "Phase 6: F3 volatility contraction knobs (r, v) and stop type vs date-matched F0"
+PHASE           = "6"
 
 FIXED_ARGS = {                        # passed to every run
     "UNIVERSE":    "dev",
     "MODE":        "signal",          # signal (Mode B) / portfolio (Mode C); setup_trend.py only
-    "F0_SEEDS":    3,
+    "F0_SEEDS":    5,
 }
 UNLOCK_HOLDOUT  = False               # Phase 12 only
 
 WINDOWS = None                        # None = full history; "walkforward"; or a list of
                                       # ("YYYY-MM-DD", "YYYY-MM-DD") pairs
-SORT_METRIC     = "avg_R"
+SORT_METRIC     = "edge_R"
 MIN_TRADES      = config.MIN_TRADES_PER_VARIANT
 SAVE_TOP_TRADES = 3
 
@@ -84,21 +84,21 @@ PARAM_GRID = {
     # "RS_COL":          ["rs_rank", "rs_rank_252", "rs_rank_126"],
 
     # ── Entry family (plan Phase 6) ──────────────────────────────────────────
-    "FAMILY":          ["f1"],
-    "N":               [50],
+    "FAMILY":          ["f3"],
+    # "N":               [20, 50, 252],                           # F1
     # "K": [5, 10, 15], "T": [5, 8, 12], "X": [10, 15],          # F2
-    # "R": [0.5, 0.65, 0.8], "V": [0.6, 0.8],                    # F3
+    "R": [0.5, 0.65, 0.8], "V": [0.6, 0.8],                      # F3
     # "ENTRY_AT": ["close", "stop", "next_open"], "VOL_MULT": [1.0, 1.4, 1.8],
     # "MAX_CHASE":       [5],
 
     # ── Exit (plan Phase 7) ──────────────────────────────────────────────────
     "EXIT":            ["x2"],
-    "HOLD_STOP":       ["initial", "breakeven"],  # x2: stop after the +20% hold starts
+    # "HOLD_STOP":       ["initial", "breakeven"],  # x2: stop after the +20% hold starts
     "STOP_PCT":        [7.5],
     "TARGET_PCT":      [22.5],
     "SLIPPAGE_PCT":    [0.20],
     # "TRAIL":           ["sma50", "ema21", "sma10"],              # x3
-    # "STOP_MODE":       ["pct", "structural"],
+    "STOP_MODE":       ["pct", "structural"],    # structural = under the 10-day low (X6)
 
     # ── Portfolio (Mode C, plan Phase 8) ─────────────────────────────────────
     # "MAX_POSITIONS":   [5, 8, 12],
