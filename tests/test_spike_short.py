@@ -70,3 +70,18 @@ def test_no_stop_never_stops():
     p = {**ss.exit_params(0, 10, 0.0), "slippage_pct": 0.0, "commission": 0.0}
     t = engine_short.simulate_short(pn(bars), 4, 16.0, True, np.nan, p)
     assert t["exit_reason"] == "time exit"
+
+
+def test_min_gap_needs_a_big_enough_gap():
+    panel = pn(SPIKE)                              # opens 17 over a 16.5 high: a 3% gap
+    assert len(cands(panel, 3, 50, "gap")["entry_row"]) == 1
+    keep = np.ones(len(panel.c), dtype=bool)
+    c5 = ss.spike_candidates(panel, keep, ss.run_gain(panel, 3), 50, "gap", min_gap=5)
+    assert len(c5["entry_row"]) == 0
+
+
+def test_rsi_simple():
+    c = np.array([10, 11, 12, 11, 12.0])
+    sym = np.zeros(5, dtype=np.int32)
+    r = ss.rsi_simple(c, sym, np.array([4, 2]), n=4)
+    assert r[0] == pytest.approx(100 * 3 / 4) and np.isnan(r[1])

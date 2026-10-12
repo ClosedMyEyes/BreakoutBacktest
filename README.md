@@ -94,7 +94,11 @@ drawdown, years up) and a by-year table for `--pick K:X:entry:stop`.
 ```
 python spike_short.py --start 2010-01-01
 python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
+python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
 ```
+
+The pick also gets a squeeze table: its trades split by what was known at entry (gap size, run size,
+volume vs normal, RSI(14), at a 52-week high, share price, the stock's and the S&P's 200-day, liquidity).
 
 ## Setup (Windows machine with Norgate)
 

@@ -31,6 +31,11 @@ HOW TO RUN:
   python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
   python spike_short.py --start 2010-01-01 --hold 5
   python spike_short.py --start 2010-01-01 --mins 30,50 --stops 0,20
+  python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
+
+The pick also gets a squeeze table: its trades split by what was known at entry
+(gap size, run size, volume, RSI(14), 52-week high, price, trends, liquidity),
+to see which buckets hold the squeezes.
 """
 
 import argparse
@@ -74,9 +79,10 @@ def run_gain(panel, k):
         return (c / low - 1) * 100
 
 
-def spike_candidates(panel, keep, gain, min_gain, trigger):
+def spike_candidates(panel, keep, gain, min_gain, trigger, min_gap=0.0):
     """Entries for one setup in engine.find_entries' format.
-    gain: run_gain(panel, K); keep: the universe on each row."""
+    gain: run_gain(panel, K); keep: the universe on each row; min_gap: gap entries
+    need an open at least this % above the prior day's high."""
     sym, o, h, c = panel.sym, panel.o, panel.h, panel.c
     in_run = gain >= min_gain
     if trigger == "close":
@@ -85,7 +91,7 @@ def spike_candidates(panel, keep, gain, min_gain, trigger):
         prev_ok = np.zeros(len(c), dtype=bool)
         prev_ok[1:] = sym[1:] == sym[:-1]
         cand = np.zeros(len(c), dtype=bool)
-        cand[1:] = in_run[:-1] & (o[1:] > h[:-1])
+        cand[1:] = in_run[:-1] & (o[1:] > h[:-1] * (1 + min_gap / 100.0))
         cand &= prev_ok
     seen = np.zeros(len(c), dtype=bool)
     for k in range(1, FIRST_IN + 1):
@@ -129,6 +135,77 @@ def summarize(t, years, hold, borrow_pct):
     }
 
 
+GAP_BINS = [0, 2, 5, 10, 20, np.inf]
+PRICE_BINS = [0, 10, 20, 50, np.inf]
+
+
+def thirds(x):
+    """Bucket x into thirds by count, labelled by their ranges ("12-30")."""
+    x = pd.Series(x, dtype=float)
+    try:
+        cut, edges = pd.qcut(x, 3, retbins=True, duplicates="drop")
+    except ValueError:                          # too few distinct values
+        return pd.Series("all", index=x.index)
+    fmt = lambda v: f"{v:.3g}"
+    labels = [f"{fmt(a)}-{fmt(b)}" for a, b in zip(edges[:-1], edges[1:])]
+    return pd.cut(x, edges, labels=labels, include_lowest=True).astype(str)
+
+
+def rsi_simple(c, sym, rows, n=14):
+    """RSI over the n bars ending at each row (simple averages); NaN without n bars."""
+    out = np.full(len(rows), np.nan)
+    ok = rows - n >= 0
+    r = rows[ok]
+    win = r[:, None] - np.arange(n, -1, -1)[None, :]           # n+1 closes, oldest first
+    same = (sym[win] == sym[r][:, None]).all(axis=1)
+    d = np.diff(c[win], axis=1)
+    up, dn = np.clip(d, 0, None).sum(axis=1), np.clip(-d, 0, None).sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        val = np.where(up + dn > 0, 100 * up / (up + dn), 50.0)
+    out[np.flatnonzero(ok)] = np.where(same, val, np.nan)
+    return out
+
+
+def entry_features(panel, t, gain, spx_above200):
+    """What was known when each trade was entered (all from the signal day, plus the
+    gap at the open for gap entries), bucketed for the squeeze table."""
+    s, e = t["signal_row"].to_numpy(), t["entry_row"].to_numpy()
+    c, o, h = panel.c, panel.o, panel.h
+    f = pd.DataFrame(index=t.index)
+    gap = np.where(e > s, (o[e] / h[s] - 1) * 100, np.nan)
+    if np.isfinite(gap).any():
+        f["gap above prior high %"] = pd.cut(gap, GAP_BINS, right=False,
+                                             labels=["0-2", "2-5", "5-10", "10-20", "20+"])
+    f["run size %"] = thirds(gain[s]).to_numpy()
+    f["volume vs 50d avg (x)"] = thirds(panel.col("vol_ratio")[s]).to_numpy()
+    f["RSI(14)"] = thirds(rsi_simple(c, panel.sym, s)).to_numpy()
+    hi = panel.col("hi52_c")[s]
+    f["vs 52-week high"] = np.where(~np.isfinite(hi), "under a year of data",
+                                    np.where(c[s] >= hi * 0.999, "new 52w high", "below 52w high"))
+    f["share price $"] = pd.cut(panel.col("unadj_close")[s], PRICE_BINS, right=False,
+                                labels=["5-10", "10-20", "20-50", "50+"])
+    sma = panel.col("sma200")[s]
+    f["stock vs its 200d"] = np.where(~np.isfinite(sma), "no 200d yet",
+                                      np.where(c[s] >= sma, "above", "below"))
+    f["S&P vs its 200d"] = np.where(spx_above200.reindex(panel.date[s]).to_numpy() == 1, "above", "below")
+    f["liquidity rank"] = thirds(panel.col("dv_pct")[s]).to_numpy()
+    return f
+
+
+def squeeze_table(t, feats):
+    """Each feature's buckets side by side: which ones hold the squeezes?"""
+    rows = []
+    r = t["ret_pct"]
+    stopped = t["exit_reason"].str.startswith("stopped")
+    for col in feats.columns:
+        for val, idx in feats.groupby(col, observed=True).groups.items():
+            g = r.loc[idx]
+            rows.append({"feature": col, "bucket": str(val), "trades": len(g),
+                         "win_%": (g > 0).mean() * 100, "ret": g.mean(), "median": g.median(),
+                         "worst_5%": g.quantile(0.05), "stopped_%": stopped.loc[idx].mean() * 100})
+    return pd.DataFrame(rows)
+
+
 def main():
     parser = argparse.ArgumentParser()
     add_param_flags(parser, ["universe"])
@@ -141,6 +218,8 @@ def main():
                         help="Run sizes to test, %%, comma separated")
     parser.add_argument("--stops", type=str, default=",".join(str(x) for x in STOPS),
                         help="Stops to test, %% above the short price, 0 = none")
+    parser.add_argument("--min-gap", type=float, default=0.0,
+                        help="Gap entries: the open must be at least this %% above the prior high")
     parser.add_argument("--pick", type=str, default="3:50:close:25",
                         help="K:X:trigger:stop for the by-year table, e.g. 10:100:gap:25")
     parser.add_argument("--save-trades", type=str, default=None, help="CSV path for the pick's trades")
@@ -151,7 +230,7 @@ def main():
     t0 = time.time()
 
     cols = (["open", "high", "low", "close", "unadj_close"] + rules.universe_columns(P)
-            + engine_short.exit_columns({"exit": "time"}))
+            + engine_short.exit_columns({"exit": "time"}) + ["vol_ratio", "sma200", "hi52_c", "dv_pct"])
     try:
         df = datastore.load_panel(cols, start=args.start, end=args.end, universe=args.universe,
                                   unlock_holdout=args.unlock_holdout, tail_days=120)
@@ -177,7 +256,7 @@ def main():
     if pick not in combos:
         combos.append(pick)
     for k, x, trg, s in combos:
-        cand = spike_candidates(panel, keep, gains[k], x, trg)
+        cand = spike_candidates(panel, keep, gains[k], x, trg, args.min_gap)
         t = engine_short.run_signals(panel, cand, exit_params(s, args.hold, args.borrow_pct),
                                      args.start, args.end, family=f"{k}:{x:g}:{trg}:{s:g}")
         rows.append({"bars": k, "gain>=": x, "entry": trg, "stop": s or "none",
@@ -187,7 +266,7 @@ def main():
 
     print("=" * 78)
     print(f"SPIKE SHORTS  hold={args.hold}  universe={args.universe}  start={args.start}  end={args.end}  "
-          f"liq_top_pct={P['liq_top_pct']:g}  ({time.time() - t0:.1f}s)")
+          f"liq_top_pct={P['liq_top_pct']:g}  min_gap={args.min_gap:g}%  ({time.time() - t0:.1f}s)")
     print("=" * 78)
     print("bars/gain>= : the close is gain% above the lowest close of the `bars` bars before it. "
           "entry: close = short that close; gap = short the next open if it is above that day's high.")
@@ -207,6 +286,14 @@ def main():
     print("\nExit reasons:")
     g = t.groupby("exit_reason")["ret_pct"]
     print(pd.DataFrame({"trades": g.size(), "ret": g.mean()}).round(2).to_string())
+
+    spx = datastore.load_market(["spx_above200"])
+    spx = pd.Series(spx["spx_above200"].to_numpy(), index=pd.to_datetime(spx["date"]).to_numpy())
+    feats = entry_features(panel, t, gains[pick[0]], spx)
+    print(f"\nWhat separates the winners from the squeezes? Pick {args.pick}, all {len(t)} trades "
+          f"(ret {t['ret_pct'].mean():.2f}%), split by what was known at entry. A bucket with low ret, "
+          f"a bad worst_5% and many stops is where the squeezes live. Thirds are by count.")
+    print(squeeze_table(t, feats).round(2).to_string(index=False))
 
     if args.save_trades:
         os.makedirs(os.path.dirname(os.path.abspath(args.save_trades)), exist_ok=True)
