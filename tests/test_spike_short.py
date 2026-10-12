@@ -156,3 +156,17 @@ def test_tstat_by_month_counts_a_month_of_trades_once():
     assert one_each == pytest.approx(many)
     e = r - r.mean()
     assert one_each == pytest.approx(r.mean() / np.sqrt((e ** 2).sum() * 6 / 5 / 36))
+
+
+def test_scan_liquidity_floor_is_the_smallest_dollar_volume_that_passes_on_the_last_day():
+    import engine
+    import spike_scan as scan
+    df = pd.DataFrame({
+        "symbol": ["AAA", "AAA", "BBB", "BBB", "CCC", "CCC"],
+        "date": pd.to_datetime(["2020-01-01", "2020-01-02"] * 3),
+        "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0,
+        "listed": [1, 1, 1, 1, 1, 0],
+        "dv_pct": [90, 90, 10, 30, 50, 95],         # BBB passes only on the last day; CCC isn't listed then
+        "dv50": [1e6, 2e6, 5e3, 3e5, 4e5, 9e3]})
+    panel = engine.Panel(df, set())
+    assert scan.liquidity_floor(panel, 80.0) == pytest.approx(3e5)

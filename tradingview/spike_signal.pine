@@ -3,7 +3,9 @@
 // Signal day: the close is 100%+ above the lowest close of the 10 bars before it, the close is
 // $5+, and no gap-up entry fired in the last 10 bars. Entry: the next open is 2%+ above the signal
 // day's high; short that open, stop 25% above it, cover at the close of the 10th bar.
-// Not checked here (spike_scan.py does): the bottom-20% dollar-volume filter and bad-data bars.
+// Liquidity: the 50-day average dollar volume on the signal day must clear the backtest's floor
+// (the bottom 20% of listed stocks), which spike_scan.py prints each night. Not checked here:
+// Norgate's bad-data bars.
 indicator("Spike short signal", shorttitle = "Spike short", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 runPct   = input.float(100.0, "Run %: close above the lowest close of the prior 10 bars", minval = 0)
@@ -11,9 +13,10 @@ gapPct   = input.float(2.0, "Gap %: next open above the signal day's high", minv
 minPx    = input.float(5.0, "Lowest signal-day close ($)", minval = 0)
 stopPct  = input.float(25.0, "Stop % above the short", minval = 0)
 holdBars = input.int(10, "Cover at the close of this many bars", minval = 1)
+minDv    = input.float(250000, "Lowest 50-day average dollar volume ($): the floor spike_scan.py prints", minval = 0)
 LOOKBACK = 10
 
-// Lowest close of the 10 bars before this one (fewer on a new listing, as in the backtest)
+// Lowest close of the 10 bars before this one
 float lowPrior = na
 for i = 1 to LOOKBACK
     c = close[i]
@@ -21,14 +24,18 @@ for i = 1 to LOOKBACK
         lowPrior := na(lowPrior) ? c : math.min(lowPrior, c)
 runNow = nz((close / lowPrior - 1) * 100)
 
+// 50-day average dollar volume, which needs 50 bars of history as in the backtest
+dv50 = ta.sma(close * volume, 50)
+liquid = not na(dv50) and dv50 >= minDv
+
 // A gap-up after a qualifying run, before the price filter; only the first in 10 bars counts
 gapDay = nz(runNow[1]) >= runPct and open > high[1] * (1 + gapPct / 100)
 sinceGap = ta.barssince(gapDay)
 gapInLast10 = not na(sinceGap) and sinceGap < LOOKBACK
 gapBefore = not na(sinceGap[1]) and sinceGap[1] < LOOKBACK
 
-entry = gapDay and not gapBefore and nz(close[1]) >= minPx
-watch = runNow >= runPct and close >= minPx and not gapInLast10
+entry = gapDay and not gapBefore and nz(close[1]) >= minPx and liquid[1]
+watch = runNow >= runPct and close >= minPx and liquid and not gapInLast10
 trigger = high * (1 + gapPct / 100)
 
 plotshape(watch, "Signal day", shape.triangledown, location.abovebar, color.orange, size = size.tiny)
@@ -46,4 +53,5 @@ if barstate.islast
 plot(watch ? 1 : 0, "Watch (1 = short next open if it gaps)", display = display.data_window)
 plot(trigger, "Short if open above", display = display.data_window)
 plot(runNow, "Run %", display = display.data_window)
+plot(dv50, "50-day avg $ volume", display = display.data_window)
 alertcondition(watch, "Spike watch", "{{ticker}} qualifies: short the next open if it opens 2% above today's high")
