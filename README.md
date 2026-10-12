@@ -114,6 +114,10 @@ research log.
 python spike_short.py --start 2010-01-01 --min-gap 2 --mins 100 --stops 25 --pick 10:100:gap:25 --sizes 2.5,5,10
 ```
 
+Stress the costs: `--slippage-pct 1` (per fill, default 0.2), `--stop-slip 5` (intraday stops fill 5% above
+the stop, as when a squeeze or a halt runs through it) and `--borrow-pct 100` (% a year, default 0.5). The pick
+also prints how many setups were skipped (a junk bar on the trigger or entry day, or a trade already open).
+
 ### Gap-up short: frozen rule and nightly scanner
 
 Frozen on 2026-10-12 and checked once on the locked half of the stocks (2010-2026): a stock whose close

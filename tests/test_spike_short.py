@@ -136,3 +136,11 @@ def test_scan_skips_a_stock_that_already_gapped_up_in_the_last_10_bars():
     panel = pn(bars)
     w = scan.watch_list(panel, np.ones(len(panel.c), dtype=bool), ss.run_gain(panel, 10))
     assert w.empty
+
+
+def test_stop_slip_only_worsens_intraday_stops():
+    t = pd.DataFrame({"exit_reason": ["stopped", "stopped (entry day)", "stopped (gap)", "time exit"],
+                      "entry": [10.0] * 4, "exit": [12.5, 12.5, 13.0, 9.0], "ret_pct": [-25.0, -25.0, -30.0, 10.0]})
+    s = ss.apply_stop_slip(t, 4)
+    assert list(s["ret_pct"]) == pytest.approx([-30.0, -30.0, -30.0, 10.0])
+    assert list(s["exit"]) == pytest.approx([13.0, 13.0, 13.0, 9.0])

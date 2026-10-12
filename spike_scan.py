@@ -43,15 +43,6 @@ RECENT_BARS = 15                 # trades entered in this many bars are listed
 SIGNALS_FILE = os.path.join(config.WORK_DIR, "spike_signals.csv")
 
 
-def junk_bar(panel, k):
-    """The backtest skips a setup whose trigger or entry bar is a price break or a
-    dividend gap (engine_short.simulate_short); the scanner skips the same ones."""
-    if panel.col("bad_bar")[k] == 1 or panel.col("bad_bar_dn")[k] == 1:
-        return True
-    return k > 0 and panel.has_next[k - 1] and \
-        panel.col("div")[k] > panel.c[k - 1] * config.DIV_MAX_PCT / 100.0
-
-
 def raw_gap_days(panel, gain):
     """Bars that opened min_gap% above a qualifying day's high, before the universe
     filter: what spike_candidates' first-in-10 rule counts."""
@@ -69,7 +60,7 @@ def watch_list(panel, keep, gain):
     gap = raw_gap_days(panel, gain)
     out = []
     for r in rows:
-        if not (keep[r] and gain[r] >= RULE["gain"]) or junk_bar(panel, r):
+        if not (keep[r] and gain[r] >= RULE["gain"]) or ss.junk_bar(panel, r):
             continue
         lo = max(r - ss.FIRST_IN + 1, 0)
         if gap[lo:r + 1][panel.sym[lo:r + 1] == panel.sym[r]].any():
