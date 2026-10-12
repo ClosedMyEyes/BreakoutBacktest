@@ -2,6 +2,7 @@
 stop / time exits through the short engine."""
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import engine_short
@@ -95,3 +96,23 @@ def test_reverse_splits_before_counts_only_past_splits_in_the_window():
     n = ss.reverse_splits_before(panel, np.array([1, 2, 5]))
     assert list(n) == [0, 1, 1]
     assert list(ss.reverse_splits_before(panel, np.array([5]), bars=3)) == [0]
+
+
+def test_account_curve_marks_open_shorts_and_books_the_trade_when_covered():
+    panel = pn([FLAT, FLAT, (10, 10, 8, 8), (8, 9, 8, 9), FLAT])
+    dates = pd.DatetimeIndex(np.unique(panel.date))
+    t = pd.DataFrame({"entry_row": [1], "exit_row": [3], "entry": [10.0], "ret_pct": [5.0]})
+    curve, skipped = ss.account_curve(panel, t, dates, size_pct=10, capital=1000.0)
+    # 100 short at 10 = 10 shares: up 20 at the close of 8, booked +5% of 100 when covered
+    assert list(curve["equity"]) == pytest.approx([1000, 1000, 1020, 1005, 1005])
+    assert list(curve["positions"]) == [0, 1, 1, 0, 0] and skipped == 0
+
+
+def test_account_curve_skips_trades_with_no_room_and_sizes_on_the_account():
+    panel = pn([FLAT] * 6)
+    dates = pd.DatetimeIndex(np.unique(panel.date))
+    t = pd.DataFrame({"entry_row": [0, 1, 3], "exit_row": [2, 2, 4], "entry": [10.0] * 3,
+                      "ret_pct": [10.0, 10.0, 10.0]})
+    curve, skipped = ss.account_curve(panel, t, dates, size_pct=50, max_shorts=1, capital=1000.0)
+    assert skipped == 1
+    assert curve["equity"].iloc[-1] == pytest.approx(1000 * 1.05 * 1.05)
