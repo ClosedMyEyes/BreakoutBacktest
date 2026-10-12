@@ -177,6 +177,16 @@ def test_no_entry_on_or_right_after_a_break():
         assert short(pn([FLAT] * 5, **{col: np.array([0, 1, 0, 0, 0])}), i_entry=2) is None
 
 
+def test_open_entry_is_not_skipped_for_an_up_break_on_its_own_bar():
+    # the up break shows only at the close, after an open entry: it's a loss, not a skip
+    bad = np.array([0, 1, 0, 0])
+    bars = [FLAT, (100, 1200, 99, 1100), FLAT, FLAT]
+    t = short(pn(bars, bad_bar=bad), at_close=False, exit="time", time_bars=2)
+    assert t is not None and t["exit_reason"] == "stopped (entry day)" and t["result_R"] < -0.9
+    assert short(pn(bars, bad_bar=bad), exit="time", time_bars=2) is None          # close entry: known
+    assert short(pn([FLAT] * 4, bad_bar_dn=bad), at_close=False, exit="time", time_bars=2) is None
+
+
 def test_stop_too_far_is_skipped():
     assert short(pn([FLAT] * 4), stop_mode="structural", struct_stop=120) is None
     t = short(pn([FLAT] * 4), stop_mode="structural", struct_stop=110, exit="time", time_bars=1)

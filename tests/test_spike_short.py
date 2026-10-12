@@ -144,3 +144,15 @@ def test_stop_slip_only_worsens_intraday_stops():
     s = ss.apply_stop_slip(t, 4)
     assert list(s["ret_pct"]) == pytest.approx([-30.0, -30.0, -30.0, 10.0])
     assert list(s["exit"]) == pytest.approx([13.0, 13.0, 13.0, 9.0])
+
+
+def test_tstat_by_month_counts_a_month_of_trades_once():
+    dates = pd.Series(pd.to_datetime(["2020-01-05", "2020-02-05", "2020-03-05", "2020-04-05",
+                                      "2020-05-05", "2020-06-05"]))
+    r = pd.Series([1.0, 3.0, 2.0, 4.0, 0.0, 2.0])
+    one_each = ss.tstat_by_month(r, dates)
+    # the same six returns, each traded four times in its month: no extra evidence
+    many = ss.tstat_by_month(pd.concat([r] * 4, ignore_index=True), pd.concat([dates] * 4, ignore_index=True))
+    assert one_each == pytest.approx(many)
+    e = r - r.mean()
+    assert one_each == pytest.approx(r.mean() / np.sqrt((e ** 2).sum() * 6 / 5 / 36))

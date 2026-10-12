@@ -57,7 +57,6 @@ import engine_short
 import research_log
 import rules
 from params import add_param_flags, add_run_flags, collect
-from reports import tstat_overlap
 
 RUN_BARS = [3, 10]
 RUN_MINS = [50, 100]
@@ -141,13 +140,27 @@ def apply_stop_slip(t, pct):
     return t
 
 
-def junk_bar(panel, k):
+def junk_bar(panel, k, up_break=True):
     """engine_short.simulate_short skips a setup whose trigger or entry bar is a
-    price break or a dividend gap; the scanner and the skip count use the same test."""
-    if panel.col("bad_bar")[k] == 1 or panel.col("bad_bar_dn")[k] == 1:
+    price break or a dividend gap (except an up break on an open entry's own bar,
+    known only at its close: up_break=False); the scanner and the skip count use
+    the same test."""
+    if (up_break and panel.col("bad_bar")[k] == 1) or panel.col("bad_bar_dn")[k] == 1:
         return True
     return bool(k > 0 and panel.has_next[k - 1]
                 and panel.col("div")[k] > panel.c[k - 1] * config.DIV_MAX_PCT / 100.0)
+
+
+def tstat_by_month(r, dates):
+    """t-stat of the average trade, with trades grouped by entry month so trades
+    open at the same time (one market, one wave of squeezes) don't count as
+    independent: the cluster-robust standard error, with the usual G/(G-1) factor."""
+    e = r - r.mean()
+    g = e.groupby(pd.to_datetime(dates).dt.to_period("M")).sum()
+    if len(g) < 5:
+        return None
+    se = np.sqrt((g ** 2).sum() * len(g) / (len(g) - 1)) / len(r)
+    return float(r.mean() / se) if se > 0 else None
 
 
 def summarize(t, years, hold, borrow_pct):
@@ -158,8 +171,7 @@ def summarize(t, years, hold, borrow_pct):
     hard = r - max(HARD_BORROW_PCT - borrow_pct, 0.0) * days / 365.0      # at least 50%/yr
     run = t.sort_values("exit_date")["ret_pct"].cumsum() / 100
     by_year = r.groupby(t["entry_date"].dt.year).sum()
-    daily = t.groupby("entry_date")["ret_pct"].mean()
-    tt, _ = tstat_overlap(daily, hold) if len(daily) > 3 * hold else (None, 0)
+    tt = tstat_by_month(r, t["entry_date"])
     return {
         "trades": len(t), "per_yr": len(t) / years,
         "win_%": (r > 0).mean() * 100, "ret": r.mean(), "median": r.median(),
@@ -267,7 +279,9 @@ def skip_report(panel, cand, t, start=None, end=None):
     if end:
         ok &= d <= np.datetime64(pd.Timestamp(end))
     rows = cand["entry_row"][ok]
-    junk = sum(junk_bar(panel, r) or (panel.has_next[r - 1] and junk_bar(panel, r - 1)) for r in rows)
+    junk = sum(junk_bar(panel, r, up_break=bool(at_close))
+               or (panel.has_next[r - 1] and junk_bar(panel, r - 1))
+               for r, at_close in zip(rows, cand["at_close"][ok]))
     return (f"\nSetups for the pick: {len(rows)}, traded {len(t)}, skipped for a junk bar (price break or "
             f"dividend gap on the trigger or entry day) {junk}, skipped with a trade already open "
             f"{len(rows) - len(t) - junk}.")
@@ -395,7 +409,8 @@ def main():
     print("bars/gain>= : the close is gain% above the lowest close of the `bars` bars before it. "
           "entry: close = short that close; gap = short the next open if it is above that day's high.")
     print("ret = % a trade after slippage, commission, borrow and dividends; ret_hard adds 50%/yr borrow; "
-          "worst_5% = the 1-in-20 loss; sum / max_dd in position sizes.")
+          "worst_5% = the 1-in-20 loss; sum / max_dd in position sizes; t = t-stat of ret with trades "
+          "grouped by entry month.")
     print(pd.DataFrame(rows).round(2).to_string(index=False))
 
     if pick_trades is None or pick_trades.empty:
