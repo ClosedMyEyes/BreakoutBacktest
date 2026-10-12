@@ -138,6 +138,9 @@ python spike_scan.py
 python spike_scan.py --asof 2025-05-07     # what it would have said that evening (not saved)
 ```
 
+`tradingview/spike_signal.pine` is the same rule as a TradingView indicator, with the steps for a nightly screen
+in `tradingview/README.md`.
+
 ## Setup (Windows machine with Norgate)
 
 ```
@@ -192,6 +195,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
 | `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
 | `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
+| `tradingview/` | The gap-up short as a TradingView indicator, and how to screen for it |
 | `filter_short.py` | Short side Mode A |
 | `reports.py` | Statistics and tables shared by the long and short scripts |
 | `engine.py` | Fill model, exits, F0 baseline, portfolio, metrics |
