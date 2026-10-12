@@ -17,7 +17,9 @@ Run it each evening after refreshing the data:
 
 Prints:
   1. The watch list for the next open, with the price the open has to beat.
-  2. The setups that triggered in the last few weeks, with the stop, the cover
+  2. The liquidity floor in dollars (the 50-day average dollar volume the bottom 20%
+     of listed stocks trade under), for the TradingView indicator's setting.
+  3. The setups that triggered in the last few weeks, with the stop, the cover
      day and where each stands (open, stopped, covered).
 Both are kept in spike_signals.csv in the work folder, the forward-test record:
 the rule can only be judged on trades from here on now that the locked half is used.
@@ -99,6 +101,16 @@ def recent_trades(panel, keep, gain, borrow_pct):
     return out.sort_values("entry_date")
 
 
+def liquidity_floor(panel, liq_top_pct):
+    """The 50-day average dollar volume a stock needed on the last day to clear the
+    liquidity filter: the smallest one inside the top liq_top_pct% of listed stocks."""
+    ok = ((panel.date == panel.date.max()) & (panel.col("listed") == 1)
+          & (panel.col("dv_pct") >= 100 - liq_top_pct))
+    dv = panel.col("dv50")[ok]
+    dv = dv[np.isfinite(dv)]
+    return float(dv.min()) if dv.size else float("nan")
+
+
 def save_signals(watch, trades, scanned):
     """Upsert into the forward-test record: one row per (kind, symbol, signal_date)."""
     new = pd.concat([watch.assign(kind="watch"), trades.assign(kind="trade")], ignore_index=True)
@@ -133,7 +145,7 @@ def main():
     P = collect(args, ["universe"])
 
     asof = pd.Timestamp(args.asof) if args.asof else pd.Timestamp(datastore.load_market(["spx_above200"])["date"].max())
-    cols = (["open", "high", "low", "close", "unadj_close", "div", "bad_bar", "bad_bar_dn"]
+    cols = (["open", "high", "low", "close", "unadj_close", "div", "bad_bar", "bad_bar_dn", "dv50"]
             + rules.universe_columns(P))
     try:
         df = datastore.load_panel(cols, start=asof - pd.Timedelta(days=LOOKBACK_DAYS), end=asof,
@@ -164,6 +176,9 @@ def main():
         print("  nothing qualifies tonight")
     else:
         print(show(watch.sort_values("run_%", ascending=False)))
+    print(f"\nLiquidity floor tonight: a 50-day average of ${liquidity_floor(panel, P['liq_top_pct']):,.0f} a day "
+          f"in dollar volume (the bottom {100 - P['liq_top_pct']:g}% of listed stocks trade less). It's the "
+          f"dollar-volume setting in the TradingView indicator.")
     print(f"\nTriggered in the last {RECENT_BARS} trading days ({len(trades)}). open = still running "
           f"(ret_% at the last close); days_left = trading days to the cover.")
     if trades.empty:

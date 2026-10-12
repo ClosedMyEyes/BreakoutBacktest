@@ -6,7 +6,7 @@
 
 On the last bar, a label gives the price the next open has to beat.
 
-It leaves out two of the backtest's checks: the bottom-20% dollar-volume filter, and Norgate's bad-data bars. Almost every spike clears the dollar-volume filter anyway, because its volume explodes.
+It also applies the backtest's liquidity floor. The stock's 50-day average dollar volume on the signal day has to clear the bottom 20% of listed stocks, and the stock needs 50 days of history. `spike_scan.py` prints the floor in dollars each night as "Liquidity floor tonight". Put that figure in the indicator's "Lowest 50-day average dollar volume" setting. The default of $250,000 is a placeholder until you do. The one backtest check it leaves out is Norgate's bad-data bars.
 
 ## Add it (once)
 
@@ -23,8 +23,9 @@ It leaves out two of the backtest's checks: the bottom-20% dollar-volume filter,
 TradingView's stock screener can't filter on "100% above the lowest close of the last 10 days", so this takes two steps. First, a loose screen finds the candidates. Then the indicator applies the exact rule.
 
 1. In Screeners, then Stocks, set the market to USA. Save two screens:
-   - "Spike 1W": Price at least 5 and Performance 1W at least 30%. This catches nearly every run that's still going.
-   - "Spike 1M": Price at least 5 and Performance 1M at least 80%. This catches stocks that doubled early in the 10 days and drifted after.
+   - "Spike 1W": Price at least 5, Performance 1W at least 30% and Average Volume 30D at least 20K. This catches nearly every run that's still going.
+   - "Spike 1M": Price at least 5, Performance 1M at least 80% and Average Volume 30D at least 20K. This catches stocks that doubled early in the 10 days and drifted after.
+   - The volume filter is deliberately loose. It drops the names that barely trade, and the indicator applies the exact dollar floor.
 2. Run both after the close. For each name, open its chart. An orange triangle on today's bar means it's on tomorrow's list, and the label gives the price to beat.
    - With a Premium plan or higher, the Pine Screener can do this check in one pass. Put the candidates in a watchlist and run the Pine Screener on it with this indicator on 1D. Then filter on "Watch (1 = short next open if it gaps)" equal to 1, or on the "Spike watch" alert condition.
 3. Post the list in the project thread: ticker, today's close and the price to beat. Claude builds the news dossiers and runs the three blind judges before the open.
