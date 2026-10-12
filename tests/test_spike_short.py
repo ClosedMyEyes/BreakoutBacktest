@@ -116,3 +116,23 @@ def test_account_curve_skips_trades_with_no_room_and_sizes_on_the_account():
     curve, skipped = ss.account_curve(panel, t, dates, size_pct=50, max_shorts=1, capital=1000.0)
     assert skipped == 1
     assert curve["equity"].iloc[-1] == pytest.approx(1000 * 1.05 * 1.05)
+
+
+# bar 13 closes at 25, 150% over the 10-bar low of 10; its high is 26
+RUN = [FLAT] * 11 + [(12, 16, 12, 15), (15, 21, 15, 20), (20, 26, 20, 25)]
+
+
+def test_scan_watch_list_gives_the_open_that_triggers_the_short():
+    import spike_scan as scan
+    panel = pn(RUN)
+    w = scan.watch_list(panel, np.ones(len(panel.c), dtype=bool), ss.run_gain(panel, 10))
+    assert list(w["symbol"]) == ["AAA"]
+    assert w["short_if_open_above"].iloc[0] == pytest.approx(26 * 1.02)
+
+
+def test_scan_skips_a_stock_that_already_gapped_up_in_the_last_10_bars():
+    import spike_scan as scan
+    bars = RUN[:-1] + [(22, 26, 21, 25)]          # opened above bar 12's high (21 * 1.02) while in a run
+    panel = pn(bars)
+    w = scan.watch_list(panel, np.ones(len(panel.c), dtype=bool), ss.run_gain(panel, 10))
+    assert w.empty
