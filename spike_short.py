@@ -45,6 +45,7 @@ import time
 import numpy as np
 import pandas as pd
 
+import config
 import datastore
 import engine
 import engine_short
@@ -166,6 +167,21 @@ def rsi_simple(c, sym, rows, n=14):
     return out
 
 
+def reverse_splits_before(panel, rows, bars=252):
+    """Reverse splits in the `bars` bars up to each row: the printed price jumped
+    up against the split-adjusted one (unadj / adjusted factor up over config's
+    break factor) on that day. Only splits already done by then count."""
+    c, sym = panel.c, panel.sym
+    f = panel.col("unadj_close") / c
+    rs = np.zeros(len(c), dtype=np.int64)
+    rs[1:] = (f[1:] / f[:-1] > config.BREAK_FACTOR_JUMP) & (sym[1:] == sym[:-1])
+    cum = np.cumsum(rs)
+    starts = np.flatnonzero(np.r_[True, sym[1:] != sym[:-1]])
+    first = starts[np.searchsorted(starts, rows, side="right") - 1]
+    lo = np.maximum(rows - bars + 1, first)
+    return cum[rows] - np.where(lo > 0, cum[np.maximum(lo - 1, 0)], 0)
+
+
 def entry_features(panel, t, gain, spx_above200):
     """What was known when each trade was entered (all from the signal day, plus the
     gap at the open for gap entries), bucketed for the squeeze table."""
@@ -189,6 +205,7 @@ def entry_features(panel, t, gain, spx_above200):
                                       np.where(c[s] >= sma, "above", "below"))
     f["S&P vs its 200d"] = np.where(spx_above200.reindex(panel.date[s]).to_numpy() == 1, "above", "below")
     f["liquidity rank"] = thirds(panel.col("dv_pct")[s]).to_numpy()
+    f["reverse split in past year"] = np.where(reverse_splits_before(panel, s) > 0, "yes", "no")
     return f
 
 
@@ -238,7 +255,7 @@ def main():
         raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
     symbols = datastore.load_symbols()
     panel = engine.Panel(df, set(symbols.loc[symbols["delisted"], "symbol"]))
-    keep = rules.universe_mask(panel.df, P)
+    keep = rules.universe_mask(panel.df, P).copy()
     if rules.market_columns(P):
         keep &= rules.market_mask(panel.df["date"], datastore.load_market(rules.market_columns(P)), P)
     if args.end is not None:
@@ -306,10 +323,13 @@ def main():
             "symbol": s["symbol"], "shorted": s["entry_date"].dt.date,
             "at": np.where(s["at_close"], "close", "open"),
             "short_px": ((s["entry"] + comm) / (1 - slip)).round(2),
+            "real_px": ((s["entry"] + comm) / (1 - slip)
+                        * panel.col("unadj_close")[s["entry_row"]] / panel.c[s["entry_row"]]).round(2),
             "stop": s["stop"].round(2) if pick[3] > 0 else np.nan,
             "covered": s["exit_date"].dt.date, "cover_px": ((s["exit"] - comm) / (1 + slip)).round(2),
             "reason": s["exit_reason"], "ret_%": s["ret_pct"].round(1)})
-        print(f"\n{len(s)} random trades to check on a chart (split-adjusted prices; "
+        print(f"\n{len(s)} random trades to check on a chart (prices split-adjusted to today, like "
+              f"TradingView; real_px = the price it actually traded at that day; "
               f"python show_data.py SYMBOL --around DATE):")
         print(view.to_string(index=False))
 
