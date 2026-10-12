@@ -95,10 +95,14 @@ drawdown, years up) and a by-year table for `--pick K:X:entry:stop`.
 python spike_short.py --start 2010-01-01
 python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
 python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
+python spike_short.py --start 2010-01-01 --min-gap 2 --stops 25,40 --market above200 --hold 5
 ```
 
 The pick also gets a squeeze table: its trades split by what was known at entry (gap size, run size,
-volume vs normal, RSI(14), at a 52-week high, share price, the stock's and the S&P's 200-day, liquidity).
+volume vs normal, RSI(14), at a 52-week high, share price, the stock's and the S&P's 200-day, liquidity,
+a reverse split in the past year). `--market above200` only takes trades while the S&P is above its 200-day.
+`--sample` prices are split-adjusted to today like TradingView, so a stock that later reverse split can
+show a silly price; `real_px` is the price it actually traded at that day (the $5 floor uses that price).
 
 ## Setup (Windows machine with Norgate)
 

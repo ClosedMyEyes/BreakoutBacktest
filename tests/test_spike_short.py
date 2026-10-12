@@ -85,3 +85,13 @@ def test_rsi_simple():
     sym = np.zeros(5, dtype=np.int32)
     r = ss.rsi_simple(c, sym, np.array([4, 2]), n=4)
     assert r[0] == pytest.approx(100 * 3 / 4) and np.isnan(r[1])
+
+
+def test_reverse_splits_before_counts_only_past_splits_in_the_window():
+    bars = [FLAT] * 6
+    unadj = [10, 10, 100, 100, 100, 100.0]         # a 1-for-10 reverse split on bar 2
+    z = np.zeros(6)
+    panel = panel_from(bars, extra={"bad_bar": z, "bad_bar_dn": z, "div": z, "unadj_close": unadj})
+    n = ss.reverse_splits_before(panel, np.array([1, 2, 5]))
+    assert list(n) == [0, 1, 1]
+    assert list(ss.reverse_splits_before(panel, np.array([5]), bars=3)) == [0]
