@@ -6,7 +6,7 @@
 // Liquidity: the 50-day average dollar volume on the signal day must clear the backtest's floor
 // (the bottom 20% of listed stocks), which spike_scan.py prints each night. Not checked here:
 // Norgate's bad-data bars.
-indicator("Spike short signal", shorttitle = "Spike short", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("SpikeShort", shorttitle = "SpikeShort", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 runPct   = input.float(100.0, "Run %: close above the lowest close of the prior 10 bars", minval = 0)
 gapPct   = input.float(2.0, "Gap %: next open above the signal day's high", minval = 0)

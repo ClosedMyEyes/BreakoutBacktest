@@ -10,7 +10,7 @@ It also applies the backtest's liquidity floor. The stock's 50-day average dolla
 
 ## Add it (once)
 
-1. Open any daily chart, then the Pine Editor at the bottom. Choose New, then Indicator. Paste in all of `spike_signal.pine`, save it as "Spike short signal" and click Add to chart.
+1. Open any daily chart, then the Pine Editor at the bottom. Choose New, then Indicator. Paste in all of `spike_signal.pine`, save it as "SpikeShort" and click Add to chart. TradingView rejects longer names with an "indicator name too long" error.
 2. Check it on trades the backtest took. Each of these charts should show an S on the entry date:
    - GRML, 2026-09-22
    - AXTI, 2026-08-07
