@@ -175,7 +175,10 @@ def simulate_short(panel, i_entry, entry_raw, at_close, struct_stop, p, risk_pct
 
     prev_same = i_entry > 0 and panel.has_next[i_entry - 1]
     for name in ("bad_bar", "bad_bar_dn", "div_gap"):  # junk print on the entry or trigger bar
-        if is_break(name, i_entry) or (prev_same and is_break(name, i_entry - 1)):
+        # An up break on the bar of an open entry is only known at its close, so it
+        # can't skip the trade (that would drop losers): it counts as a loss instead
+        on_entry = is_break(name, i_entry) and (at_close or name != "bad_bar")
+        if on_entry or (prev_same and is_break(name, i_entry - 1)):
             return None
 
     model = p["exit"]

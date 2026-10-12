@@ -57,7 +57,6 @@ import engine_short
 import research_log
 import rules
 from params import add_param_flags, add_run_flags, collect
-from reports import tstat_overlap
 
 RUN_BARS = [3, 10]
 RUN_MINS = [50, 100]
@@ -115,11 +114,53 @@ def spike_candidates(panel, keep, gain, min_gain, trigger, min_gap=0.0):
             "struct_stop": np.full(int(ok.sum()), np.nan), "at_close": at_close[ok]}
 
 
-def exit_params(stop, hold, borrow_pct):
-    return {**engine_short.EXIT_DEFAULTS, "exit": "time", "time_bars": hold,
-            "max_hold": max(hold, 60), "stop_mode": "pct",
-            "stop_pct": stop if stop > 0 else 1e6,           # "no stop" = one that can't be hit
-            "max_risk_pct": 1e9, "borrow_pct": borrow_pct}
+def exit_params(stop, hold, borrow_pct, slippage_pct=None):
+    p = {**engine_short.EXIT_DEFAULTS, "exit": "time", "time_bars": hold,
+         "max_hold": max(hold, 60), "stop_mode": "pct",
+         "stop_pct": stop if stop > 0 else 1e6,              # "no stop" = one that can't be hit
+         "max_risk_pct": 1e9, "borrow_pct": borrow_pct}
+    if slippage_pct is not None:
+        p["slippage_pct"] = slippage_pct
+    return p
+
+
+INTRADAY_STOPS = ("stopped", "stopped (entry day)")     # filled at the stop price, not at an open
+
+
+def apply_stop_slip(t, pct):
+    """Stress: intraday stops fill pct% above the stop (a squeeze or a halt runs
+    through it) instead of at it. Gap-through stops already fill at the open."""
+    if t.empty or pct <= 0:
+        return t
+    t = t.copy()
+    hit = t["exit_reason"].isin(INTRADAY_STOPS)
+    extra = t.loc[hit, "exit"] * pct / 100.0
+    t.loc[hit, "exit"] += extra
+    t.loc[hit, "ret_pct"] -= extra / t.loc[hit, "entry"] * 100
+    return t
+
+
+def junk_bar(panel, k, up_break=True):
+    """engine_short.simulate_short skips a setup whose trigger or entry bar is a
+    price break or a dividend gap (except an up break on an open entry's own bar,
+    known only at its close: up_break=False); the scanner and the skip count use
+    the same test."""
+    if (up_break and panel.col("bad_bar")[k] == 1) or panel.col("bad_bar_dn")[k] == 1:
+        return True
+    return bool(k > 0 and panel.has_next[k - 1]
+                and panel.col("div")[k] > panel.c[k - 1] * config.DIV_MAX_PCT / 100.0)
+
+
+def tstat_by_month(r, dates):
+    """t-stat of the average trade, with trades grouped by entry month so trades
+    open at the same time (one market, one wave of squeezes) don't count as
+    independent: the cluster-robust standard error, with the usual G/(G-1) factor."""
+    e = r - r.mean()
+    g = e.groupby(pd.to_datetime(dates).dt.to_period("M")).sum()
+    if len(g) < 5:
+        return None
+    se = np.sqrt((g ** 2).sum() * len(g) / (len(g) - 1)) / len(r)
+    return float(r.mean() / se) if se > 0 else None
 
 
 def summarize(t, years, hold, borrow_pct):
@@ -127,11 +168,10 @@ def summarize(t, years, hold, borrow_pct):
         return {"trades": 0}
     days = (t["exit_date"] - t["entry_date"]).dt.days
     r = t["ret_pct"]
-    hard = r - (HARD_BORROW_PCT - borrow_pct) * days / 365.0
+    hard = r - max(HARD_BORROW_PCT - borrow_pct, 0.0) * days / 365.0      # at least 50%/yr
     run = t.sort_values("exit_date")["ret_pct"].cumsum() / 100
     by_year = r.groupby(t["entry_date"].dt.year).sum()
-    daily = t.groupby("entry_date")["ret_pct"].mean()
-    tt, _ = tstat_overlap(daily, hold) if len(daily) > 3 * hold else (None, 0)
+    tt = tstat_by_month(r, t["entry_date"])
     return {
         "trades": len(t), "per_yr": len(t) / years,
         "win_%": (r > 0).mean() * 100, "ret": r.mean(), "median": r.median(),
@@ -229,6 +269,24 @@ def squeeze_table(t, feats):
     return pd.DataFrame(rows)
 
 
+def skip_report(panel, cand, t, start=None, end=None):
+    """Setups the pick did not trade, and why: a junk bar on the trigger or entry
+    day (simulate_short skips it), or a trade already open on the stock."""
+    d = panel.date[cand["entry_row"]]
+    ok = np.ones(len(d), dtype=bool)
+    if start:
+        ok &= d >= np.datetime64(pd.Timestamp(start))
+    if end:
+        ok &= d <= np.datetime64(pd.Timestamp(end))
+    rows = cand["entry_row"][ok]
+    junk = sum(junk_bar(panel, r, up_break=bool(at_close))
+               or (panel.has_next[r - 1] and junk_bar(panel, r - 1))
+               for r, at_close in zip(rows, cand["at_close"][ok]))
+    return (f"\nSetups for the pick: {len(rows)}, traded {len(t)}, skipped for a junk bar (price break or "
+            f"dividend gap on the trigger or entry day) {junk}, skipped with a trade already open "
+            f"{len(rows) - len(t) - junk}.")
+
+
 def account_curve(panel, t, dates, size_pct, max_shorts=10, capital=100_000.0, seed=0):
     """Trade the pick through one account. Each short is size_pct% of the account
     (as marked at the prior close) when it opens; at most max_shorts are open at
@@ -290,6 +348,10 @@ def main():
                         help="Run sizes to test, %%, comma separated")
     parser.add_argument("--stops", type=str, default=",".join(str(x) for x in STOPS),
                         help="Stops to test, %% above the short price, 0 = none")
+    parser.add_argument("--slippage-pct", type=float, default=None,
+                        help="Stress: slippage %% per fill (default %(default)s = the engine's 0.2)")
+    parser.add_argument("--stop-slip", type=float, default=0.0,
+                        help="Stress: intraday stops fill this %% above the stop instead of at it")
     parser.add_argument("--min-gap", type=float, default=0.0,
                         help="Gap entries: the open must be at least this %% above the prior high")
     parser.add_argument("--pick", type=str, default="3:50:close:25",
@@ -324,7 +386,7 @@ def main():
     pk = args.pick.split(":")
     pick = (int(pk[0]), float(pk[1]), pk[2], float(pk[3]))
     gains = {k: run_gain(panel, k) for k in RUN_BARS + ([pick[0]] if pick[0] not in RUN_BARS else [])}
-    rows, pick_trades = [], None
+    rows, pick_trades, pick_cand = [], None, None
     mins = [float(x) for x in args.mins.split(",")]
     stops = [float(x) for x in args.stops.split(",")]
     combos = [(k, x, trg, s) for k in RUN_BARS for x in mins for trg in TRIGGERS for s in stops]
@@ -332,12 +394,13 @@ def main():
         combos.append(pick)
     for k, x, trg, s in combos:
         cand = spike_candidates(panel, keep, gains[k], x, trg, args.min_gap)
-        t = engine_short.run_signals(panel, cand, exit_params(s, args.hold, args.borrow_pct),
+        t = engine_short.run_signals(panel, cand, exit_params(s, args.hold, args.borrow_pct, args.slippage_pct),
                                      args.start, args.end, family=f"{k}:{x:g}:{trg}:{s:g}")
+        t = apply_stop_slip(t, args.stop_slip)
         rows.append({"bars": k, "gain>=": x, "entry": trg, "stop": s or "none",
                      **summarize(t, years, args.hold, args.borrow_pct)})
         if (k, x, trg, s) == pick:
-            pick_trades = t
+            pick_trades, pick_cand = t, cand
 
     print("=" * 78)
     print(f"SPIKE SHORTS  hold={args.hold}  universe={args.universe}  start={args.start}  end={args.end}  "
@@ -346,7 +409,8 @@ def main():
     print("bars/gain>= : the close is gain% above the lowest close of the `bars` bars before it. "
           "entry: close = short that close; gap = short the next open if it is above that day's high.")
     print("ret = % a trade after slippage, commission, borrow and dividends; ret_hard adds 50%/yr borrow; "
-          "worst_5% = the 1-in-20 loss; sum / max_dd in position sizes.")
+          "worst_5% = the 1-in-20 loss; sum / max_dd in position sizes; t = t-stat of ret with trades "
+          "grouped by entry month.")
     print(pd.DataFrame(rows).round(2).to_string(index=False))
 
     if pick_trades is None or pick_trades.empty:
@@ -361,6 +425,7 @@ def main():
     print("\nExit reasons:")
     g = t.groupby("exit_reason")["ret_pct"]
     print(pd.DataFrame({"trades": g.size(), "ret": g.mean()}).round(2).to_string())
+    print(skip_report(panel, pick_cand, t, args.start, args.end))
 
     spx = datastore.load_market(["spx_above200"])
     spx = pd.Series(spx["spx_above200"].to_numpy(), index=pd.to_datetime(spx["date"]).to_numpy())
@@ -375,7 +440,7 @@ def main():
         t.to_csv(args.save_trades, index=False)
     if args.sample:
         s = t.sample(min(args.sample, len(t)), random_state=args.sample_seed).sort_values("entry_date")
-        p = exit_params(pick[3], args.hold, args.borrow_pct)
+        p = exit_params(pick[3], args.hold, args.borrow_pct, args.slippage_pct)
         slip, comm = p["slippage_pct"] / 100.0, p["commission"]
         view = pd.DataFrame({
             "symbol": s["symbol"], "shorted": s["entry_date"].dt.date,

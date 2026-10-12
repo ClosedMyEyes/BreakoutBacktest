@@ -51,7 +51,12 @@ def tradable_symbols(universe):
     # A return to the exchanges (SYMBOL~2) is the same company as SYMBOL, so it
     # takes SYMBOL's side even if the split file predates it
     syms = pd.read_parquet(config.SYMBOLS_FILE, columns=["symbol"])["symbol"].astype(str)
-    return {s for s in syms if side.get(s, side.get(s.split("~")[0])) == universe}
+    sides = [side.get(s, side.get(s.split("~")[0])) for s in syms]
+    missing = sum(x is None for x in sides)
+    if missing:
+        print(f"Note: {missing} symbols listed after {os.path.basename(config.SPLIT_FILE)} was made are in "
+              f"neither dev nor holdout (only in --universe all).")
+    return {s for s, x in zip(syms, sides) if x == universe}
 
 
 def _schema_cols(path):

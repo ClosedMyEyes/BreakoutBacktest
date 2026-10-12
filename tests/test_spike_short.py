@@ -116,3 +116,43 @@ def test_account_curve_skips_trades_with_no_room_and_sizes_on_the_account():
     curve, skipped = ss.account_curve(panel, t, dates, size_pct=50, max_shorts=1, capital=1000.0)
     assert skipped == 1
     assert curve["equity"].iloc[-1] == pytest.approx(1000 * 1.05 * 1.05)
+
+
+# bar 13 closes at 25, 150% over the 10-bar low of 10; its high is 26
+RUN = [FLAT] * 11 + [(12, 16, 12, 15), (15, 21, 15, 20), (20, 26, 20, 25)]
+
+
+def test_scan_watch_list_gives_the_open_that_triggers_the_short():
+    import spike_scan as scan
+    panel = pn(RUN)
+    w = scan.watch_list(panel, np.ones(len(panel.c), dtype=bool), ss.run_gain(panel, 10))
+    assert list(w["symbol"]) == ["AAA"]
+    assert w["short_if_open_above"].iloc[0] == pytest.approx(26 * 1.02)
+
+
+def test_scan_skips_a_stock_that_already_gapped_up_in_the_last_10_bars():
+    import spike_scan as scan
+    bars = RUN[:-1] + [(22, 26, 21, 25)]          # opened above bar 12's high (21 * 1.02) while in a run
+    panel = pn(bars)
+    w = scan.watch_list(panel, np.ones(len(panel.c), dtype=bool), ss.run_gain(panel, 10))
+    assert w.empty
+
+
+def test_stop_slip_only_worsens_intraday_stops():
+    t = pd.DataFrame({"exit_reason": ["stopped", "stopped (entry day)", "stopped (gap)", "time exit"],
+                      "entry": [10.0] * 4, "exit": [12.5, 12.5, 13.0, 9.0], "ret_pct": [-25.0, -25.0, -30.0, 10.0]})
+    s = ss.apply_stop_slip(t, 4)
+    assert list(s["ret_pct"]) == pytest.approx([-30.0, -30.0, -30.0, 10.0])
+    assert list(s["exit"]) == pytest.approx([13.0, 13.0, 13.0, 9.0])
+
+
+def test_tstat_by_month_counts_a_month_of_trades_once():
+    dates = pd.Series(pd.to_datetime(["2020-01-05", "2020-02-05", "2020-03-05", "2020-04-05",
+                                      "2020-05-05", "2020-06-05"]))
+    r = pd.Series([1.0, 3.0, 2.0, 4.0, 0.0, 2.0])
+    one_each = ss.tstat_by_month(r, dates)
+    # the same six returns, each traded four times in its month: no extra evidence
+    many = ss.tstat_by_month(pd.concat([r] * 4, ignore_index=True), pd.concat([dates] * 4, ignore_index=True))
+    assert one_each == pytest.approx(many)
+    e = r - r.mean()
+    assert one_each == pytest.approx(r.mean() / np.sqrt((e ** 2).sum() * 6 / 5 / 36))

@@ -20,7 +20,7 @@ This is a separate program from Stockbot and never runs inside the live trading 
 | 7 | Exit models | X1, X2 (original or breakeven stop after the +20% hold), X3, X4 (sell part at +2R or +X%, stop to breakeven, trail the rest), X5, X6 and time exit done |
 | 8 | Mode C portfolio | Done, with Monte Carlo drawdown range |
 | 9–11 | Market light, fundamentals, earnings dates | Market features computed; rules to do |
-| 12–14 | Holdout run, scanner, forward test | To do |
+| 12–14 | Holdout run, scanner, forward test | Spike short: holdout passed (+5.45%/trade, t 2.41), `spike_scan.py` scanner and forward-test log done |
 
 The long side is parked (best version: `--family f3 --stop-mode structural --market above200`).
 
@@ -114,6 +114,30 @@ research log.
 python spike_short.py --start 2010-01-01 --min-gap 2 --mins 100 --stops 25 --pick 10:100:gap:25 --sizes 2.5,5,10
 ```
 
+Stress the costs: `--slippage-pct 1` (per fill, default 0.2), `--stop-slip 5` (intraday stops fill 5% above
+the stop, as when a squeeze or a halt runs through it) and `--borrow-pct 100` (% a year, default 0.5). The pick
+also prints how many setups were skipped (a junk bar on the trigger or entry day, or a trade already open).
+
+### Gap-up short: frozen rule and nightly scanner
+
+Frozen on 2026-10-12 and checked once on the locked half of the stocks (2010-2026): a stock whose close
+is 100%+ above the lowest close of the 10 bars before it, that opens the next day at least 2% above that
+day's high, is shorted at that open with a stop 25% above the short and covered at the close of the 10th
+trading day. Dev half +9.25% a trade (296 trades, t 4.85); locked half +5.45% (310 trades, t 2.41, 12/17
+years up). Nearly all the gains are from 2018 on in both halves. The locked half is now used for this
+family, so changes to it (a bigger minimum run, other exits) can only be judged on trades from here on.
+
+`spike_scan.py` runs the same code on the latest data: tonight's watch list with the open price that
+triggers the short, and the setups that triggered in the last 15 trading days with their stop, cover day and
+status. Both go into `spike_signals.csv` in the work folder, the forward-test record.
+
+```
+python build_data.py
+python build_features.py
+python spike_scan.py
+python spike_scan.py --asof 2025-05-07     # what it would have said that evening (not saved)
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
@@ -166,6 +190,8 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `rules_short.py` | Short side: universe, downtrend template, market filter, setups S1-S5 |
 | `engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
+| `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
+| `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
 | `filter_short.py` | Short side Mode A |
 | `reports.py` | Statistics and tables shared by the long and short scripts |
 | `engine.py` | Fill model, exits, F0 baseline, portfolio, metrics |
