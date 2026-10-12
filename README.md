@@ -85,6 +85,17 @@ After that, a gap-up blow-off table (a small-cap day trader's rule): after a run
 10-day low, short the first day that opens above the prior day's high, at its open or close, or only if
 it closes red, next to shorting the run's first day with no gap; then by year for `--spike-min`.
 
+`spike_short.py` trades those spike shorts through the short engine with stops and every cost
+(slippage, commission, borrow, dividends): runs measured over 3 or 10 bars, 50/100%+, shorted at the
+close or at the next gap-up open, stops none/15/25/40% above the short, covered after `--hold` bars.
+Prints a grid (win rate, average, the 1-in-20 loss, worst, % stopped, a 50%/yr borrow stress, total,
+drawdown, years up) and a by-year table for `--pick K:X:entry:stop`.
+
+```
+python spike_short.py --start 2010-01-01
+python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
