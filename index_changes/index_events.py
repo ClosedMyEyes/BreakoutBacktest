@@ -38,7 +38,8 @@ The S&P 500 is a poor yardstick for a small cap, so each focus transition also
 gets a detail section against the stock's own index: an equal-weight average of
 the Dev stocks in that index each day (the new index for an add, the old one for
 a drop to none). It shows every hold length, and splits post10 by the run-up
-(pre5), the flow day, price and flow-day volume.
+(pre5), the trend before it (mom20: days -26 to -6 vs the S&P), the flow day,
+price, flow-day volume and the stock's usual dollar volume (dv50 before the run-up).
 
 The days the S&P 400 (1991) and 600 (1994) were launched put hundreds of stocks
 into an index at once. Any day with more than 60 events of one transition is
@@ -172,6 +173,7 @@ def add_windows(ev, df, spx, levels=None):
             ix[(bi < 0) | (bj < 0)] = np.nan
             ev[f"{name}_idx"] = (raw - ix) * 100
 
+    window(-26, -6, "mom20")
     window(-6, -1, "pre5")
     window(-2, -1, "flow")
     for h in POST_H:
@@ -186,6 +188,10 @@ def add_windows(ev, df, spx, levels=None):
     with np.errstate(invalid="ignore", divide="ignore"):
         ev["vol_-1"] = vol[np.maximum(r - 1, 0)] / base
         ev["vol_0"] = vol[r] / base
+    if "dv50" in df:
+        # usual dollar volume, $M a day, before the run-up (thin stocks feel index buying more)
+        dv = df["dv50"].to_numpy(np.float64)[np.maximum(r - 6, 0)] / 1e6
+        ev["dv50_m"] = np.where(r - 6 >= first, dv, np.nan)
     return ev
 
 
@@ -264,7 +270,10 @@ def detail(g, years):
                 f"trade{MAIN_H}": np.nanmean(sg * x) - cost}
 
     rows = [split_row("all", np.ones(len(g), dtype=bool))]
-    for col, label in [("pre5", "run-up pre5"), ("vol_-1", "flow-day volume")]:
+    for col, label in [("pre5", "run-up pre5"), ("mom20", "trend before (days -26 to -6)"),
+                       ("vol_-1", "flow-day volume"), ("dv50_m", "usual $ volume ($M/day)")]:
+        if col not in g:
+            continue
         v = g[col]
         lo, hi = v.quantile(1 / 3), v.quantile(2 / 3)
         rows += [split_row(f"{label} low third (< {lo:.1f})", (v < lo).to_numpy()),
@@ -302,7 +311,8 @@ def main():
     args = parser.parse_args()
 
     t0 = time.time()
-    cols = ["close", "unadj_close", "volume", "bad_bar", "bad_bar_dn", "in_sp500", "in_sp400", "in_sp600"]
+    cols = ["close", "unadj_close", "volume", "dv50", "bad_bar", "bad_bar_dn",
+            "in_sp500", "in_sp400", "in_sp600"]
     try:
         # Full history: the index a stock was in before --start still matters
         df = datastore.load_panel(cols, universe=args.universe, unlock_holdout=args.unlock_holdout)
@@ -389,7 +399,7 @@ def main():
         print(pd.DataFrame(rows).round(2).to_string(index=False))
 
     if args.save_events:
-        keep = ["symbol", "date", "transition", "kind", "price", "pre5", "flow"] + \
+        keep = ["symbol", "date", "transition", "kind", "price", "dv50_m", "mom20", "pre5", "flow"] + \
                [f"post{h}" for h in POST_H] + [f"post{h}_idx" for h in POST_H] + \
                ["late10", "vol_-1", "vol_0"]
         ev[keep].to_csv(args.save_events, index=False)
