@@ -13,7 +13,7 @@ Run it each evening after refreshing the data:
   python build_data.py
   python build_features.py
   python spike_scan.py
-  python spike_scan.py --asof 2025-05-07     # what it would have said that evening
+  python spike_scan.py --asof 2025-05-07     # what it would have said that evening (not saved)
 
 Prints:
   1. The watch list for the next open, with the price the open has to beat.
@@ -136,7 +136,8 @@ def main():
     parser.set_defaults(liq_top_pct=80.0)
     parser.add_argument("--asof", type=str, default=None, help="Scan as of this date's close (default: latest)")
     parser.add_argument("--borrow-pct", type=float, default=engine_short.EXIT_DEFAULTS["borrow_pct"])
-    parser.add_argument("--no-save", action="store_true", help="Don't write spike_signals.csv")
+    parser.add_argument("--no-save", action="store_true",
+                        help="Don't write spike_signals.csv (never written for an --asof scan)")
     args = parser.parse_args()
     P = collect(args, ["universe"])
 
@@ -179,7 +180,7 @@ def main():
     else:
         print(show(trades))
 
-    if not args.no_save:
+    if not (args.no_save or args.asof):            # the record holds only live scans
         save_signals(watch, trades, pd.Timestamp.today().normalize())
         print(f"\nSaved to {SIGNALS_FILE}")
 

@@ -131,7 +131,7 @@ status. Both go into `spike_signals.csv` in the work folder, the forward-test re
 python build_data.py
 python build_features.py
 python spike_scan.py
-python spike_scan.py --asof 2025-05-07     # what it would have said that evening
+python spike_scan.py --asof 2025-05-07     # what it would have said that evening (not saved)
 ```
 
 ## Setup (Windows machine with Norgate)
