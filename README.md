@@ -75,7 +75,12 @@ S&P above/below its 200-day, the stock above/below its own 200-day, and size. No
 python reversion_test.py                       # all years, Dev
 python reversion_test.py --start 2010-01-01
 python reversion_test.py --measure ibs         # breakdown tables for another measure
+python reversion_test.py --start 2010-01-01 --spike-min 30
 ```
+
+It ends with a spike table for the short side: the first day a stock is up 10/20/30/50%+ over 3 days,
+split by the stock and the S&P being above or below their 200-days, with the raw 5/10/20-day move a
+plain short pays and the 10-day short after costs, then by 5-year block for one threshold.
 
 ## Setup (Windows machine with Norgate)
 
