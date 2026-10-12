@@ -158,6 +158,21 @@ python index_changes/index_events.py --start 2010-01-01
 python index_changes/index_events.py --focus "600->none"      # by-year table for one transition
 ```
 
+## Crash rebound
+
+Idea #5, the mirror of the spike short: after a stock falls 20/30/50%+ in 1 or 3 days, does it bounce?
+It lives in its own folder, `crash_rebound/`. `crash_rebound/crash_events.py` takes the first day of each
+fall (one event per crash), keeps the stocks that pass the universe filter ($5, top 80% liquidity) and
+prints the raw 1-20 day return of a long from that close (or the next open), after costs, then splits one
+pick by what was known at entry (200-day, S&P trend, index member or just dropped from one, gap, close in
+the range, volume, prior move, price), by 5-year block and by year. No stops or exits yet.
+
+```
+python crash_rebound/crash_events.py --start 2010-01-01
+python crash_rebound/crash_events.py --start 2010-01-01 --pick 1:20 --sample 10
+python crash_rebound/crash_events.py --start 2010-01-01 --entry next_open
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
@@ -211,6 +226,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
 | `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
+| `crash_rebound/` | Crash rebound: returns after a big 1 or 3-day fall |
 | `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
 | `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
 | `tradingview/` | The gap-up short as a TradingView indicator, and how to screen for it |
@@ -264,7 +280,7 @@ for full-history runs.
 ## Tests
 
 ```
-python -m pytest tests index_changes
+python -m pytest tests index_changes crash_rebound
 ```
 
 Hand-built price paths cover every fill and exit rule, the eight template rules, no look-ahead, forward labels,
