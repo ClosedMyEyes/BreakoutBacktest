@@ -37,16 +37,22 @@ Returns (all in %, close to close, stock minus the S&P over the same days):
 Windows that span a price break are left out. Dividends aren't charged.
 
 HOW TO RUN:
-  python index_events.py                          # every year, Dev stocks
-  python index_events.py --start 2010-01-01       # the years that broke the other setups
-  python index_events.py --focus "600->none"      # by-year table for one transition
+  python index_changes/index_events.py                          # every year, Dev stocks
+  python index_changes/index_events.py --start 2010-01-01       # the years that broke the other setups
+  python index_changes/index_events.py --focus "600->none"      # by-year table for one transition
 """
 
 import argparse
+import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
+
+# Kept in its own folder (a separate idea from the spike short); shares the
+# repo's data loading, so the repo root goes on the import path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 import datastore

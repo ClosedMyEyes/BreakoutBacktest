@@ -1,11 +1,15 @@
 """S&P index changes: which day counts as the change, buyouts, and the
 flow-day alignment of the return windows."""
 
+import os
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
 
-import index_events as ie
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import index_events as ie  # noqa: E402
 
 
 def toy(states, closes, symbol="AAA", start="2020-01-01"):

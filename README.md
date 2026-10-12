@@ -146,15 +146,16 @@ in `tradingview/README.md`.
 The first event study after the spike short. Index funds must buy every stock added to the S&P
 500/400/600 and sell every stock that leaves, at the close before the change takes effect. If that
 forced trading overshoots, adds should lag the S&P afterwards (short them) and drops should beat it
-(buy them). `index_events.py` finds every change in the daily index flags (adds, drops and moves
+(buy them). It lives in its own folder, `index_changes/`, apart from the spike short.
+`index_changes/index_events.py` finds every change in the daily index flags (adds, drops and moves
 between indexes, buyouts left out) and prints the stock's return against the S&P before the change,
 on the flow day, and 1/5/10/20 days after the flow-day close, by transition, by 5-year block and by
 year. No stops or exits yet; no rebuild needed.
 
 ```
-python index_events.py                          # every year, Dev
-python index_events.py --start 2010-01-01
-python index_events.py --focus "600->none"      # by-year table for one transition
+python index_changes/index_events.py                          # every year, Dev
+python index_changes/index_events.py --start 2010-01-01
+python index_changes/index_events.py --focus "600->none"      # by-year table for one transition
 ```
 
 ## Setup (Windows machine with Norgate)
@@ -210,7 +211,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
 | `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
-| `index_events.py` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
+| `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
 | `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
 | `tradingview/` | The gap-up short as a TradingView indicator, and how to screen for it |
 | `filter_short.py` | Short side Mode A |
@@ -263,7 +264,7 @@ for full-history runs.
 ## Tests
 
 ```
-python -m pytest tests
+python -m pytest tests index_changes
 ```
 
 Hand-built price paths cover every fill and exit rule, the eight template rules, no look-ahead, forward labels,
