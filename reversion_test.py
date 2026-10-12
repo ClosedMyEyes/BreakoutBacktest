@@ -57,6 +57,8 @@ BUCKET_H = [1, 3, 5, 10]
 MAIN_H = 5
 SPIKE_MINS = [10, 20, 30, 50]   # 3-day % gain thresholds for the spike table
 SPIKE_H = 10
+SPIKE_HS = [5, 10, 20]
+HARD_BORROW_PCT = 50.0          # % a year, a stress for hard-to-borrow spikers
 MIN_STOCKS = 50          # skip days with fewer stocks than this in the universe
 
 parser = argparse.ArgumentParser()
@@ -114,8 +116,9 @@ def add_forward(df, codes, market):
     idx = np.arange(n)
     # last row index of each symbol (rows are sorted by symbol, date)
     last = pd.Series(idx).groupby(codes).transform("max").to_numpy()
-    brk = ((df["bad_bar"].fillna(0) > 0) | (df["bad_bar_dn"].fillna(0) > 0)).to_numpy()
-    cb = np.cumsum(brk)
+    brk_dn = (df["bad_bar_dn"].fillna(0) > 0).to_numpy()
+    brk = (df["bad_bar"].fillna(0) > 0).to_numpy() | brk_dn
+    cb, cb_dn = np.cumsum(brk), np.cumsum(brk_dn)
 
     if args.entry == "close":
         entry = c
@@ -133,6 +136,15 @@ def add_forward(df, codes, market):
         spans = cb[j] - cb[idx] > 0
         if s:
             spans |= brk[np.minimum(idx + 1, last)]
+        if hz in SPIKE_HS:
+            # Short view for the spike table: only a downward break is a drop a short can't
+            # trust; an upward one (a 10x day, a reverse-split jump) stays in as a loss
+            spans_dn = cb_dn[j] - cb_dn[idx] > 0
+            if s:
+                spans_dn |= brk_dn[np.minimum(idx + 1, last)]
+            rs = ret.copy()
+            rs[spans_dn] = np.nan
+            df[f"rs{hz}"] = rs.astype(np.float32)
         ret[spans] = np.nan
         df[f"r{hz}"] = ret.astype(np.float32)
         base = m["spx_close"] if s == 0 else m["spx_open"].shift(-1)
@@ -140,6 +152,8 @@ def add_forward(df, codes, market):
     df = df.merge(spx, on="date", how="left")
     for hz in HORIZONS:
         df[f"x{hz}"] = (df[f"r{hz}"] - df[f"spx{hz}"]).astype(np.float32)
+    for hz in SPIKE_HS:
+        df[f"xs{hz}"] = (df[f"rs{hz}"] - df[f"spx{hz}"]).astype(np.float32)
     return df
 
 
@@ -232,13 +246,15 @@ def spike_events(df, thr):
 def spike_row(g, cost, years):
     h = SPIKE_H
     out = {"events": len(g), "per_yr": len(g) / years}
-    for hz in (5, 10, 20):
-        out[f"raw{hz}"] = g[f"r{hz}"].mean() * 100
-    out[f"med{h}"] = g[f"r{h}"].median() * 100
-    out[f"fell{h}_%"] = (g[f"r{h}"].dropna() < 0).mean() * 100
-    out[f"vs_spx{h}"] = g[f"x{h}"].mean() * 100
+    for hz in SPIKE_HS:
+        out[f"raw{hz}"] = g[f"rs{hz}"].mean() * 100
+    out[f"med{h}"] = g[f"rs{h}"].median() * 100
+    out[f"p95_{h}"] = g[f"rs{h}"].quantile(0.95) * 100     # the squeezes: 1 in 20 does worse
+    out[f"fell{h}_%"] = (g[f"rs{h}"].dropna() < 0).mean() * 100
+    out[f"vs_spx{h}"] = g[f"xs{h}"].mean() * 100
     out[f"short_net{h}"] = -out[f"raw{h}"] - cost
-    s = g.groupby("date")[f"r{h}"].mean().dropna()
+    out[f"net_hard_borrow"] = out[f"short_net{h}"] - HARD_BORROW_PCT * h / 252
+    s = g.groupby("date")[f"rs{h}"].mean().dropna()
     t, _ = tstat_overlap(s, h) if len(s) > 3 * h else (None, 0)
     out[f"t{h}"] = t
     return out
@@ -256,11 +272,23 @@ def spike_tables(df):
             rows.append({"3d_gain>=": thr, "split": name, **spike_row(g, cost, years)})
     print(f"\nSPIKES: first day a stock is up X% or more over 3 days. rawH = average % move over H days "
           f"(a short earns minus this); medH = median; fellH_% = share that fell; short_net{SPIKE_H} = "
-          f"-raw{SPIKE_H} minus the {cost:.2f}% round trip (borrow and dividends not charged)")
+          f"-raw{SPIKE_H} minus the {cost:.2f}% round trip; net_hard_borrow also charges "
+          f"{HARD_BORROW_PCT:g}%/yr borrow (dividends not charged). p95_{SPIKE_H} = the move 1 in 20 "
+          f"spikes beats (a squeeze)")
     print(pd.DataFrame(rows).round(3).to_string(index=False))
 
     thr = args.spike_min
     ev = df.loc[spike_events(df, thr)]
+    rows = []
+    for y, g in ev.groupby(ev["date"].dt.year):
+        r = spike_row(g, cost, 1.0)
+        r["sum_net"] = float(r["events"] * r[f"short_net{SPIKE_H}"] / 100)
+        rows.append({"year": y, **{k: r[k] for k in ["events", f"raw{SPIKE_H}", f"med{SPIKE_H}",
+                                                      f"fell{SPIKE_H}_%", f"short_net{SPIKE_H}", "sum_net"]}})
+    print(f"\nSpikes of {thr:g}%+ in 3 days, every stock, by year (sum_net = total of the "
+          f"10-day shorts after cost, in position sizes: 1.0 = one whole position made):")
+    print(pd.DataFrame(rows).round(3).to_string(index=False))
+
     ev = ev.loc[(ev["close"] < ev["sma200"]).to_numpy()]
     rows = []
     for b, g in ev.groupby("block"):
