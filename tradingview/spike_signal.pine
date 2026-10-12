@@ -1,0 +1,49 @@
+//@version=6
+// Spike-short signal: the frozen rule from spike_short.py and spike_scan.py, for a daily chart.
+// Signal day: the close is 100%+ above the lowest close of the 10 bars before it, the close is
+// $5+, and no gap-up entry fired in the last 10 bars. Entry: the next open is 2%+ above the signal
+// day's high; short that open, stop 25% above it, cover at the close of the 10th bar.
+// Not checked here (spike_scan.py does): the bottom-20% dollar-volume filter and bad-data bars.
+indicator("Spike short signal", shorttitle = "Spike short", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+runPct   = input.float(100.0, "Run %: close above the lowest close of the prior 10 bars", minval = 0)
+gapPct   = input.float(2.0, "Gap %: next open above the signal day's high", minval = 0)
+minPx    = input.float(5.0, "Lowest signal-day close ($)", minval = 0)
+stopPct  = input.float(25.0, "Stop % above the short", minval = 0)
+holdBars = input.int(10, "Cover at the close of this many bars", minval = 1)
+LOOKBACK = 10
+
+// Lowest close of the 10 bars before this one (fewer on a new listing, as in the backtest)
+float lowPrior = na
+for i = 1 to LOOKBACK
+    c = close[i]
+    if not na(c)
+        lowPrior := na(lowPrior) ? c : math.min(lowPrior, c)
+runNow = nz((close / lowPrior - 1) * 100)
+
+// A gap-up after a qualifying run, before the price filter; only the first in 10 bars counts
+gapDay = nz(runNow[1]) >= runPct and open > high[1] * (1 + gapPct / 100)
+sinceGap = ta.barssince(gapDay)
+gapInLast10 = not na(sinceGap) and sinceGap < LOOKBACK
+gapBefore = not na(sinceGap[1]) and sinceGap[1] < LOOKBACK
+
+entry = gapDay and not gapBefore and nz(close[1]) >= minPx
+watch = runNow >= runPct and close >= minPx and not gapInLast10
+trigger = high * (1 + gapPct / 100)
+
+plotshape(watch, "Signal day", shape.triangledown, location.abovebar, color.orange, size = size.tiny)
+plotshape(entry, "Short entry", shape.labeldown, location.abovebar, color.red, text = "S", textcolor = color.white, size = size.tiny)
+if entry
+    stopPx = open * (1 + stopPct / 100)
+    line.new(bar_index, stopPx, bar_index + holdBars, stopPx, color = color.red, style = line.style_dashed)
+
+var label note = na
+if barstate.islast
+    label.delete(note)
+    note := watch ? label.new(bar_index, high, "Short next open if above " + str.tostring(trigger, format.mintick) + "\nRun " + str.tostring(runNow, "#") + "%", style = label.style_label_down, color = color.orange, textcolor = color.black) : na
+
+// Columns for the Pine Screener (hidden on the chart)
+plot(watch ? 1 : 0, "Watch (1 = short next open if it gaps)", display = display.data_window)
+plot(trigger, "Short if open above", display = display.data_window)
+plot(runNow, "Run %", display = display.data_window)
+alertcondition(watch, "Spike watch", "{{ticker}} qualifies: short the next open if it opens 2% above today's high")
