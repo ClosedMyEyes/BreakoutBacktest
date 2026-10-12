@@ -67,3 +67,30 @@ def test_windows_across_a_price_break_are_dropped():
     spx = pd.DataFrame({"date": df["date"], "spx_close": 100.0})
     ev = ie.add_windows(ev, df, spx)
     assert np.isnan(ev["post10"][0]) and ev["post1"][0] == pytest.approx(0.0)
+
+
+def test_own_index_benchmark_is_the_equal_weight_average_of_its_members():
+    # Two other stocks sit in the 400 the whole time: one flat, one up 1% a day.
+    n = 60
+    up = 10.0 * 1.01 ** np.arange(n)
+    a = toy([1] * 30 + [2] * 30, np.full(n, 10.0), "AAA")
+    b = toy([2] * n, np.full(n, 10.0), "BBB")
+    c = toy([2] * n, up, "CCC")
+    df, ev = events(pd.concat([a, b, c]))
+    lv = ie.member_levels(df, df["symbol"].cat.codes.to_numpy())
+    # BBB and CCC are the 400 every day: +0.5% a day on average
+    assert lv[2].iloc[10] / lv[2].iloc[9] - 1 == pytest.approx(0.005)
+    spx = pd.DataFrame({"date": df["date"].unique(), "spx_close": 100.0})
+    ev = ie.add_windows(ev[ev["symbol"] == "AAA"].reset_index(drop=True), df, spx, lv)
+    # AAA is flat after joining the 400; the 400 rose, so AAA lagged its own index.
+    # On days 0..9 AAA itself is in the 400 too (three members), before that two
+    assert ev["post10_idx"][0] < 0
+    assert ev["post10"][0] == pytest.approx(0.0)
+
+
+def test_launch_day_batches_are_dropped():
+    syms = [toy([0] * 10 + [1] * 30, np.full(40, 10.0), f"S{k}") for k in range(ie.LAUNCH_BATCH + 1)]
+    one = toy([0] * 12 + [1] * 30, np.full(42, 10.0), "ZZZ")      # an ordinary add on another day
+    df, ev = events(pd.concat(syms + [one]))
+    kept, n = ie.drop_launches(ev)
+    assert n == ie.LAUNCH_BATCH + 1 and list(kept["symbol"]) == ["ZZZ"]

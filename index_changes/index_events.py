@@ -34,12 +34,23 @@ Returns (all in %, close to close, stock minus the S&P over the same days):
            round-trip cost. Against the S&P, so it assumes the S&P leg is hedged
   t10      month-clustered t-stat of post10
 
+The S&P 500 is a poor yardstick for a small cap, so each focus transition also
+gets a detail section against the stock's own index: an equal-weight average of
+the Dev stocks in that index each day (the new index for an add, the old one for
+a drop to none). It shows every hold length, and splits post10 by the run-up
+(pre5), the flow day, price and flow-day volume.
+
+The days the S&P 400 (1991) and 600 (1994) were launched put hundreds of stocks
+into an index at once. Any day with more than 60 events of one transition is
+treated as a launch and left out.
+
 Windows that span a price break are left out. Dividends aren't charged.
 
 HOW TO RUN:
   python index_changes/index_events.py                          # every year, Dev stocks
   python index_changes/index_events.py --start 2010-01-01       # the years that broke the other setups
-  python index_changes/index_events.py --focus "600->none"      # by-year table for one transition
+  python index_changes/index_events.py --focus "600->none"      # detail and by-year tables for one transition
+  python index_changes/index_events.py --start 2010-01-01 --focus "none->600,600->none"
 """
 
 import argparse
@@ -64,6 +75,7 @@ MAIN_H = 10
 STABLE_BARS = 5       # the old index must have held this many bars before the change
 BUYOUT_BARS = 20      # left for "none" and stopped trading within this many bars = buyout
 VOL_BASE = (-25, -6)  # rows used for the stock's usual volume
+LAUNCH_BATCH = 60     # more events than this of one transition on one day = an index launch
 
 
 def index_state(df):
@@ -102,8 +114,36 @@ def find_events(df, codes):
     return ev
 
 
-def add_windows(ev, df, spx):
-    """Stock-minus-S&P returns for each window, by offsets from the event row."""
+def member_levels(df, codes):
+    """Equal-weight index level of each S&P index's Dev members, by date: the
+    average daily return of the stocks that were in it at the prior close
+    (days with a price break left out), chained. Columns 1 / 2 / 3 = 600 / 400 / 500."""
+    st = index_state(df)
+    c = df["close"].to_numpy(np.float64)
+    same = np.r_[False, codes[1:] == codes[:-1]]
+    prev_c = np.r_[np.nan, c[:-1]]
+    prev_st = np.r_[0, st[:-1]]
+    brk = ((df["bad_bar"].fillna(0) > 0) | (df["bad_bar_dn"].fillna(0) > 0)).to_numpy()
+    ok = same & ~brk & (prev_st > 0) & (prev_c > 0)
+    d = pd.DataFrame({"date": df["date"].to_numpy()[ok], "state": prev_st[ok],
+                      "ret": c[ok] / prev_c[ok] - 1})
+    daily = d.groupby(["date", "state"])["ret"].mean().unstack("state")
+    all_dates = pd.Index(np.sort(df["date"].unique()), name="date")
+    daily = daily.reindex(index=all_dates, columns=[1, 2, 3]).fillna(0.0)
+    return (1 + daily).cumprod()
+
+
+def drop_launches(ev):
+    """Leave out index launch days: more than LAUNCH_BATCH events of one transition
+    on one day (the S&P 400 in 1991, the 600 in 1994). Returns (events, number dropped)."""
+    batch = ev.groupby(["date", "transition"])["row"].transform("size")
+    launch = (batch > LAUNCH_BATCH).to_numpy()
+    return ev[~launch].reset_index(drop=True), int(launch.sum())
+
+
+def add_windows(ev, df, spx, levels=None):
+    """Stock-minus-S&P returns for each window, by offsets from the event row, and
+    (with levels) stock minus its own index's members as {name}_idx."""
     c = df["close"].to_numpy(np.float64)
     vol = df["volume"].to_numpy(np.float64)
     brk = ((df["bad_bar"].fillna(0) > 0) | (df["bad_bar_dn"].fillna(0) > 0)).to_numpy()
@@ -111,6 +151,7 @@ def add_windows(ev, df, spx):
     dates = df["date"].to_numpy()
     spx_c = spx.set_index("date")["spx_close"]
     r, first, last = ev["row"].to_numpy(), ev["first"].to_numpy(), ev["last"].to_numpy()
+    own = np.where(ev["new"].to_numpy() > 0, ev["new"].to_numpy(), ev["old"].to_numpy())
 
     def window(a, b, name):
         i, j = r + a, np.minimum(r + b, last)        # a stock that ends early uses its last close
@@ -122,6 +163,14 @@ def add_windows(ev, df, spx):
         raw[bad] = np.nan
         ev[f"raw_{name}"] = raw * 100
         ev[name] = (raw - sp) * 100
+        if levels is not None:
+            lv = levels.to_numpy()
+            pos = levels.index.get_indexer(pd.DatetimeIndex(dates))
+            col = np.clip(own - 1, 0, 2)
+            bi, bj = pos[i], pos[j]
+            ix = lv[bj, col] / lv[bi, col] - 1
+            ix[(bi < 0) | (bj < 0)] = np.nan
+            ev[f"{name}_idx"] = (raw - ix) * 100
 
     window(-6, -1, "pre5")
     window(-2, -1, "flow")
@@ -189,6 +238,48 @@ def group_table(ev, key, years):
     return pd.DataFrame(rows)
 
 
+def detail(g, years):
+    """Hold lengths and splits for one transition, against its own index."""
+    sign = np.where(g["kind"] == "add", -1.0, 1.0)
+    cost = round_trip_cost()
+    rows = []
+    for h in POST_H:
+        x = g[f"post{h}_idx"]
+        rows.append({"hold": h, "vs_spx": g[f"post{h}"].mean(), "vs_index": x.mean(),
+                     "med_vs_index": x.median(), "t_vs_index": tstat_by_month(x, g["date"]),
+                     "trade_vs_index": np.nanmean(sign * x.to_numpy()) - cost,
+                     "trade_%_per_day": (np.nanmean(sign * x.to_numpy()) - cost) / h})
+    print(f"  by hold (entry at the flow-day close; trade = in the natural direction minus {cost:.2f}%):")
+    print(pd.DataFrame(rows).round(3).to_string(index=False))
+
+    m = f"post{MAIN_H}_idx"
+
+    def split_row(name, mask):
+        s = g.loc[mask]
+        x = s[m].to_numpy()
+        sg = np.where(s["kind"] == "add", -1.0, 1.0)
+        return {"split": name, "events": len(s), "per_yr": len(s) / years,
+                f"post{MAIN_H}_vs_spx": s[f"post{MAIN_H}"].mean(), f"post{MAIN_H}_vs_index": np.nanmean(x),
+                f"t{MAIN_H}": tstat_by_month(s[m], s["date"]),
+                f"trade{MAIN_H}": np.nanmean(sg * x) - cost}
+
+    rows = [split_row("all", np.ones(len(g), dtype=bool))]
+    for col, label in [("pre5", "run-up pre5"), ("vol_-1", "flow-day volume")]:
+        v = g[col]
+        lo, hi = v.quantile(1 / 3), v.quantile(2 / 3)
+        rows += [split_row(f"{label} low third (< {lo:.1f})", (v < lo).to_numpy()),
+                 split_row(f"{label} middle third", ((v >= lo) & (v < hi)).to_numpy()),
+                 split_row(f"{label} high third (>= {hi:.1f})", (v >= hi).to_numpy())]
+    rows += [split_row("flow day up vs S&P", (g["flow"] > 0).to_numpy()),
+             split_row("flow day down vs S&P", (g["flow"] <= 0).to_numpy())]
+    px = g["price"]
+    rows += [split_row("price $5-15", (px < 15).to_numpy()),
+             split_row("price $15-40", ((px >= 15) & (px < 40)).to_numpy()),
+             split_row("price $40+", (px >= 40).to_numpy())]
+    print(f"\n  post{MAIN_H} split by what was known at the flow-day close (vs its own index):")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+
 def block_of(dates):
     y = pd.to_datetime(pd.Series(dates)).dt.year // 5 * 5
     return (y.astype(str) + "-" + (y + 4).astype(str)).to_numpy()
@@ -222,6 +313,7 @@ def main():
     spx = pd.read_parquet(config.MARKET_FILE, columns=["date", "spx_close"])
 
     ev = find_events(df, codes)
+    ev, n_launch = drop_launches(ev)
     if args.start:
         ev = ev[ev["date"] >= pd.Timestamp(args.start)]
     if args.end:
@@ -231,8 +323,9 @@ def main():
     ev = ev[~ev["buyout"]].reset_index(drop=True)
     px = df["unadj_close"].to_numpy(np.float64)[np.maximum(ev["row"].to_numpy() - 1, 0)]
     n_cheap = int((px < args.min_price).sum())
+    ev["price"] = px
     ev = ev[~(px < args.min_price)].reset_index(drop=True)
-    ev = add_windows(ev, df, spx)
+    ev = add_windows(ev, df, spx, member_levels(df, codes))
 
     print("=" * 100)
     print(f"S&P INDEX CHANGES  universe={args.universe}  start={args.start}  end={args.end}  "
@@ -244,7 +337,8 @@ def main():
     years = span_years(ev["date"])
     print(f"{len(ev):,} events, {years:.1f} years ({ev['date'].min():%Y-%m-%d} to "
           f"{ev['date'].max():%Y-%m-%d}). Left out: {n_buyout} buyouts (left the index and stopped "
-          f"trading within {BUYOUT_BARS} bars), {n_cheap} under ${args.min_price:g}.")
+          f"trading within {BUYOUT_BARS} bars), {n_cheap} under ${args.min_price:g}, "
+          f"{n_launch} on index launch days (all years).")
     print("=" * 100)
     pd.set_option("display.width", 250)
 
@@ -269,7 +363,7 @@ def main():
         print(pd.DataFrame(rows).round(2).to_string(index=False))
 
     if args.focus:
-        focus = [args.focus]
+        focus = [f.strip() for f in args.focus.split(",") if f.strip()]
     else:
         counts = ev.groupby(["kind", "transition"]).size().reset_index(name="n")
         focus = [counts[counts["kind"] == k].sort_values("n").iloc[-1]["transition"]
@@ -279,18 +373,25 @@ def main():
         if g.empty:
             print(f"\nNo {f} events. Transitions found: {sorted(ev['transition'].unique())}")
             continue
+        print(f"\n{f} IN DETAIL ({len(g)} events, {len(g) / years:.1f} a year):")
+        detail(g, years)
         rows = []
         for y, gy in g.groupby(g["date"].dt.year):
             s = stats(gy, 1.0)
+            sg = np.where(gy["kind"] == "add", -1.0, 1.0)
             rows.append({"year": y, **{k: s.get(k) for k in
                                        ["events", "pre5", "flow", "post5", f"post{MAIN_H}", "post20",
-                                        f"trade{MAIN_H}"]}})
-        print(f"\n{f} by year:")
+                                        f"trade{MAIN_H}"]},
+                         f"post{MAIN_H}_idx": gy[f"post{MAIN_H}_idx"].mean(),
+                         f"trade{MAIN_H}_idx": np.nanmean(sg * gy[f"post{MAIN_H}_idx"].to_numpy())
+                         - round_trip_cost()})
+        print(f"\n{f} by year (_idx = against its own index):")
         print(pd.DataFrame(rows).round(2).to_string(index=False))
 
     if args.save_events:
-        keep = ["symbol", "date", "transition", "kind", "pre5", "flow"] + \
-               [f"post{h}" for h in POST_H] + ["late10", "vol_-1", "vol_0"]
+        keep = ["symbol", "date", "transition", "kind", "price", "pre5", "flow"] + \
+               [f"post{h}" for h in POST_H] + [f"post{h}_idx" for h in POST_H] + \
+               ["late10", "vol_-1", "vol_0"]
         ev[keep].to_csv(args.save_events, index=False)
         print(f"\nSaved {len(ev)} events to {args.save_events}")
 
@@ -304,7 +405,8 @@ def main():
         research_log.append(
             question="Do stocks fade after joining an S&P index and bounce after leaving?",
             phase="index", split=args.universe, script="index_events.py",
-            params={"start": args.start, "end": args.end, "min_price": args.min_price},
+            params={"start": args.start, "end": args.end, "min_price": args.min_price,
+                    "focus": args.focus},
             combinations=1, runs=1, results=res)
 
 
