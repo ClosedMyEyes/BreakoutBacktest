@@ -63,6 +63,20 @@ python setup_short.py --family s3 --sample 10 --sample-result loss
 
 Short-side Mode C (portfolio) is not built yet.
 
+## Stretch study (mean reversion)
+
+Both breakout sides stopped working after 2010, so the next question is whether short-term mean
+reversion exists on the daily chart. `reversion_test.py` ranks every stock each day by how stretched
+it is (3-day move in ATR units, RSI(2), close position in the day's range), splits them into buckets
+and prints each bucket's next 1/3/5/10-day return against the S&P 500, with tables by 5-year block,
+S&P above/below its 200-day, the stock above/below its own 200-day, and size. No setups or costs yet.
+
+```
+python reversion_test.py                       # all years, Dev
+python reversion_test.py --start 2010-01-01
+python reversion_test.py --measure ibs         # breakdown tables for another measure
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
