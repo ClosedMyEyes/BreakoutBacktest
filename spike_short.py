@@ -32,10 +32,15 @@ HOW TO RUN:
   python spike_short.py --start 2010-01-01 --hold 5
   python spike_short.py --start 2010-01-01 --mins 30,50 --stops 0,20
   python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
+  python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 2 --sizes 2.5,5,10
 
 The pick also gets a squeeze table: its trades split by what was known at entry
 (gap size, run size, volume, RSI(14), 52-week high, price, trends, liquidity),
 to see which buckets hold the squeezes.
+
+--sizes runs the pick through one account: each short is that % of the account
+when it opens, at most --max-shorts open at once, marked to market every close.
+Every run adds a row to the research log.
 """
 
 import argparse
@@ -49,6 +54,7 @@ import config
 import datastore
 import engine
 import engine_short
+import research_log
 import rules
 from params import add_param_flags, add_run_flags, collect
 from reports import tstat_overlap
@@ -223,6 +229,55 @@ def squeeze_table(t, feats):
     return pd.DataFrame(rows)
 
 
+def account_curve(panel, t, dates, size_pct, max_shorts=10, capital=100_000.0, seed=0):
+    """Trade the pick through one account. Each short is size_pct% of the account
+    (as marked at the prior close) when it opens; at most max_shorts are open at
+    once, same-day signals taken in random order. Open shorts are marked at every
+    close, and a trade's full ret_pct (costs, borrow and dividends included) is
+    booked the day it's covered. Returns the daily curve and the trades skipped."""
+    c = panel.c
+    di = np.searchsorted(dates, panel.date)
+    entries = {}
+    for tr in t.sample(frac=1, random_state=seed).itertuples():
+        entries.setdefault(di[tr.entry_row], []).append(tr)
+    open_, realized, equity, skipped, rows = [], 0.0, capital, 0, []
+    for k, d in enumerate(dates):
+        for tr in entries.get(k, []):
+            if len(open_) >= max_shorts:
+                skipped += 1
+                continue
+            notional = max(equity, 0.0) * size_pct / 100
+            open_.append({"row": tr.entry_row, "exit_row": tr.exit_row, "entry": tr.entry,
+                          "shares": notional / tr.entry, "pnl": notional * tr.ret_pct / 100})
+        unreal, short_value, still = 0.0, 0.0, []
+        for pos in open_:
+            if di[pos["exit_row"]] <= k:
+                realized += pos["pnl"]
+                continue
+            while pos["row"] < pos["exit_row"] and di[pos["row"] + 1] <= k:
+                pos["row"] += 1
+            unreal += pos["shares"] * (pos["entry"] - c[pos["row"]])
+            short_value += pos["shares"] * c[pos["row"]]
+            still.append(pos)
+        open_ = still
+        equity = capital + realized + unreal
+        rows.append({"date": d, "equity": equity, "invested": short_value, "positions": len(open_)})
+    return pd.DataFrame(rows), skipped
+
+
+def account_summary(curve, t, size_pct, skipped, capital=100_000.0):
+    m = engine.portfolio_metrics(curve)
+    eq = curve.set_index("date")["equity"]
+    year_end = eq.groupby(eq.index.year).last()
+    by_year = (year_end / year_end.shift(1).fillna(capital) - 1) * 100
+    mc = engine.monte_carlo_dd(t["ret_pct"] * size_pct / 100, risk_pct=1.0)
+    return {"size_%": size_pct, "cagr": m["cagr"], "max_dd": m["max_dd_pct"], "mar": m["mar"],
+            "worst_year": by_year.min(), "longest_dd_days": m["longest_dd_days"],
+            "max_open": int(curve["positions"].max()),
+            "max_short_%": (curve["invested"] / curve["equity"]).max() * 100,
+            "skipped": skipped, "mc_dd_med": mc["mc_dd_p50"], "mc_dd_1in20": mc["mc_dd_p5"]}, by_year
+
+
 def main():
     parser = argparse.ArgumentParser()
     add_param_flags(parser, ["universe"])
@@ -242,6 +297,9 @@ def main():
     parser.add_argument("--save-trades", type=str, default=None, help="CSV path for the pick's trades")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check")
     parser.add_argument("--sample-seed", type=int, default=0)
+    parser.add_argument("--sizes", type=str, default="",
+                        help="Account test for the pick: %% of the account per short, comma separated, e.g. 2.5,5,10")
+    parser.add_argument("--max-shorts", type=int, default=10, help="Account test: most shorts open at once")
     args = parser.parse_args()
     P = collect(args, ["universe"])
     t0 = time.time()
@@ -332,6 +390,30 @@ def main():
               f"TradingView; real_px = the price it actually traded at that day; "
               f"python show_data.py SYMBOL --around DATE):")
         print(view.to_string(index=False))
+
+    if args.sizes:
+        start = pd.Timestamp(args.start) if args.start else d.min()
+        dates = pd.DatetimeIndex(np.unique(panel.date[panel.date >= max(start, d.min())]))
+        rows, years_tab = [], {}
+        for size in [float(x) for x in args.sizes.split(",")]:
+            curve, skipped = account_curve(panel, t, dates, size, args.max_shorts)
+            row, by_year = account_summary(curve, t, size, skipped)
+            rows.append(row)
+            years_tab[f"{size:g}%"] = by_year
+        print(f"\nAccount test, pick {args.pick}, {dates[0].date()} to {dates[-1].date()}: each short is size_% of "
+              f"the account when it opens (sized on the prior close), at most {args.max_shorts} open at once, "
+              f"marked to market at every close. cagr / max_dd / worst_year in % of the account; max_short_% = "
+              f"most of the account short at once; skipped = trades with no room; mc_dd = the worst drop if the "
+              f"same trades came in a random order (median / 1-in-20).")
+        print(pd.DataFrame(rows).round(2).to_string(index=False))
+        print("\nAccount % return by year (column = % of the account per short):")
+        print(pd.DataFrame(years_tab).round(1).to_string())
+
+    research_log.append(
+        question=f"Spike shorts, pick {args.pick}, min_gap {args.min_gap:g}%, hold {args.hold}",
+        phase="spike", split=args.universe, script="spike_short.py",
+        params={**vars(args), **P}, combinations=len(combos), runs=len(combos),
+        results={"pick": summarize(t, years, args.hold, args.borrow_pct)})
 
 
 if __name__ == "__main__":

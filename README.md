@@ -104,6 +104,16 @@ a reverse split in the past year). `--market above200` only takes trades while t
 `--sample` prices are split-adjusted to today like TradingView, so a stock that later reverse split can
 show a silly price; `real_px` is the price it actually traded at that day (the $5 floor uses that price).
 
+`--sizes 2.5,5,10` adds an account test for the pick: each short is that % of the account when it opens
+(sized on the prior close), at most `--max-shorts` (10) open at once, marked to market at every close.
+It prints yearly growth, the worst drawdown, the worst year, the most of the account short at once and the
+drawdown if the same trades came in a random order, then the return by year. Every run adds a row to the
+research log.
+
+```
+python spike_short.py --start 2010-01-01 --min-gap 2 --mins 100 --stops 25 --pick 10:100:gap:25 --sizes 2.5,5,10
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
