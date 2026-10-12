@@ -81,6 +81,9 @@ python reversion_test.py --start 2010-01-01 --spike-min 30
 It ends with a spike table for the short side: the first day a stock is up 10/20/30/50%+ over 3 days,
 split by the stock and the S&P being above or below their 200-days, with the raw 5/10/20-day move a
 plain short pays and the 10-day short after costs, then by 5-year block for one threshold.
+After that, a gap-up blow-off table (a small-cap day trader's rule): after a run of 30/50/100%+ from the
+10-day low, short the first day that opens above the prior day's high, at its open or close, or only if
+it closes red, next to shorting the run's first day with no gap; then by year for `--spike-min`.
 
 ## Setup (Windows machine with Norgate)
 

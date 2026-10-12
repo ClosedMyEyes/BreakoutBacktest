@@ -30,12 +30,18 @@ HOW TO RUN:
   python reversion_test.py --measure rsi2        # the breakdown tables for another measure
   python reversion_test.py --entry next_open
   python reversion_test.py --start 2010-01-01 --spike-min 30   # the by-block spike table for 30%+ spikes
+                                                               # (and the gap-up by-year table for 30% runs)
 
 Spike table (the short side): the first day a stock is up 10 / 20 / 30 / 50% or more
 over 3 days, split by the stock and the S&P being above or below their 200-days,
 with RAW returns over 5 / 10 / 20 days (a plain short earns minus these) and the
 10-day short after the round-trip cost. Then the same by 5-year block for one
 threshold (--spike-min) in stocks below their 200-day.
+
+Gap-up blow-off table (a small-cap day trader's rule): after a run of 30 / 50 / 100%+
+from the 10-day low, short the first day that opens above the prior day's high, at
+its open or its close (or only if it closes red), against shorting the run's first
+qualifying day with no gap needed. Then by year for --spike-min.
 """
 
 import argparse
@@ -59,6 +65,8 @@ SPIKE_MINS = [10, 20, 30, 50]   # 3-day % gain thresholds for the spike table
 SPIKE_H = 10
 SPIKE_HS = [5, 10, 20]
 HARD_BORROW_PCT = 50.0          # % a year, a stress for hard-to-borrow spikers
+GAP_MINS = [30, 50, 100]        # run size (% above the 10-day low close) for the gap-up table
+RUN_BARS = 10                   # the run is measured from the lowest close of this many bars
 MIN_STOCKS = 50          # skip days with fewer stocks than this in the universe
 
 parser = argparse.ArgumentParser()
@@ -299,6 +307,124 @@ def spike_tables(df):
     print(pd.DataFrame(rows).round(3).to_string(index=False))
 
 
+def shift_bool(arr, k, codes):
+    """Boolean arr shifted k rows earlier, False where it would cross a symbol."""
+    out = np.zeros(len(arr), dtype=bool)
+    out[k:] = arr[:-k] & (codes[k:] == codes[:-k])
+    return out
+
+
+def first_in(cand, codes, bars=RUN_BARS):
+    """cand, but only where it wasn't also true in the previous `bars` rows of that stock."""
+    seen = np.zeros(len(cand), dtype=bool)
+    for k in range(1, bars + 1):
+        seen |= shift_bool(cand, k, codes)
+    return cand & ~seen
+
+
+def gap_events(df, codes, keep):
+    """The gap-up blow-off short (a small-cap day trader's rule): after a big run, wait for
+    the first day the stock opens above the prior day's high, and short it.
+
+    Run = yesterday's close is up X% or more from the lowest close of the RUN_BARS bars
+    ending yesterday. For each X, four ways in, each the first of its kind in RUN_BARS bars:
+      run day, short close    first day the run qualifies; short that day's close, gap or not
+      gap-up, short open      first gap-up day in the run; short at its open
+      gap-up, short close     the same day, short at its close
+      gap-up + red, close     the same day if it closes below its open; short the close
+    Returns a small table of events with short-view returns (only downward price breaks
+    drop a window), computed before the universe filter so shifts stay within a stock."""
+    n = len(df)
+    c = df["close"].to_numpy(np.float64)
+    o = df["open"].to_numpy(np.float64)
+    h1 = shift_within(df["high"].to_numpy(np.float64), 1, codes)
+    c1 = shift_within(c, 1, codes)
+    minc = c1.copy()
+    for k in range(2, RUN_BARS + 1):
+        minc = np.fmin(minc, shift_within(c, k, codes))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        run_prev = (c1 / minc - 1) * 100
+    gap = o > h1
+    red = c < o
+
+    flags = {}
+    for thr in sorted(set(GAP_MINS + [args.spike_min])):
+        in_run = run_prev >= thr
+        flags[f"A{thr:g}"] = first_in(in_run, codes) & keep
+        flags[f"G{thr:g}"] = first_in(in_run & gap, codes) & keep
+    sel = np.flatnonzero(np.logical_or.reduce(list(flags.values())))
+
+    idx = np.arange(n)
+    last = pd.Series(idx).groupby(codes).transform("max").to_numpy()[sel]
+    brk_dn = (df["bad_bar_dn"].fillna(0) > 0).to_numpy()
+    cb_dn = np.cumsum(brk_dn)
+    out = pd.DataFrame({"date": df["date"].to_numpy()[sel], "symbol": df["symbol"].to_numpy()[sel],
+                        "red": red[sel], "close": c[sel], "sma200": df["sma200"].to_numpy()[sel]})
+    for k, v in flags.items():
+        out[k] = v[sel]
+    for hz in SPIKE_HS:
+        j = np.minimum(sel + hz, last)
+        none = j == sel
+        dn_close = cb_dn[j] - cb_dn[sel] > 0
+        dn_open = dn_close | brk_dn[sel]            # the open entry also holds bar t itself
+        rc = c[j] / c[sel] - 1
+        ro = c[j] / o[sel] - 1
+        rc[none | dn_close] = np.nan
+        ro[none | dn_open] = np.nan
+        out[f"rc{hz}"], out[f"ro{hz}"] = rc, ro
+    return out
+
+
+GAP_WAYS = [   # (name, short name for the by-year table, event flag, return, extra condition)
+    ("run day, short close", "run_close", "A", "rc", None),
+    ("gap-up, short open", "gap_open", "G", "ro", None),
+    ("gap-up, short close", "gap_close", "G", "rc", None),
+    ("gap-up + red, short close", "gap_red", "G", "rc", "red"),
+]
+
+
+def gap_subset(gev, spx, thr, way):
+    name, short, flag, ret, extra = way
+    m = gev[f"{flag}{thr:g}"].to_numpy().copy()
+    if extra:
+        m &= gev[extra].to_numpy(dtype=bool)
+    g = gev.loc[m, ["date"]].copy()
+    base = spx["spx_open"] if ret == "ro" else spx["spx_close"]
+    for hz in SPIKE_HS:
+        g[f"rs{hz}"] = gev.loc[m, f"{ret}{hz}"].to_numpy()
+        sp = (spx["spx_close"].shift(-hz) / base - 1)
+        g[f"xs{hz}"] = g[f"rs{hz}"] - g["date"].map(pd.Series(sp.to_numpy(), index=spx["date"]))
+    return g
+
+
+def gap_tables(gev, market, years):
+    cost = round_trip_cost()
+    spx = market.sort_values("date").reset_index(drop=True)
+    rows = []
+    for thr in GAP_MINS:
+        for way in GAP_WAYS:
+            rows.append({"run>=": thr, "way in": way[0],
+                         **spike_row(gap_subset(gev, spx, thr, way), cost, years)})
+    print(f"\nGAP-UP BLOW-OFF: yesterday's close is X%+ above the lowest close of the last {RUN_BARS} "
+          f"bars; gap-up = opens above the prior day's high. Each way in is the first of its kind in "
+          f"{RUN_BARS} bars. Same columns as SPIKES (raw = what the stock did; a short earns minus it).")
+    print(pd.DataFrame(rows).round(3).to_string(index=False))
+
+    thr = args.spike_min
+    by = {}
+    for way in GAP_WAYS:
+        g = gap_subset(gev, spx, thr, way)
+        for y, gy in g.groupby(g["date"].dt.year):
+            r = spike_row(gy, cost, 1.0)
+            by.setdefault(y, {"year": y})
+            by[y][f"{way[1]}_n"] = r["events"]
+            by[y][f"{way[1]}_net"] = r[f"short_net{SPIKE_H}"]
+    print(f"\nGap-up blow-off, runs of {thr:g}%+, by year: events (n) and the 10-day short after cost "
+          f"(net, % a trade). run_close = run day, short close; gap_open / gap_close = first gap-up "
+          f"day, short its open / close; gap_red = gap-up day that closes red, short the close")
+    print(pd.DataFrame(list(by.values())).round(2).to_string(index=False))
+
+
 def main():
     t0 = time.time()
     cols = (rules.universe_columns(P) + ["open", "high", "low", "close", "atr14", "sma200",
@@ -319,6 +445,7 @@ def main():
         keep &= (df["date"] <= pd.Timestamp(args.end)).to_numpy()
     if rules.market_columns(P):
         keep &= rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
+    gev = gap_events(df, codes, keep)
     df = df.loc[keep].reset_index(drop=True)
     per_day = df.groupby("date")["date"].transform("size")
     df = df.loc[per_day >= MIN_STOCKS].reset_index(drop=True)
@@ -352,6 +479,7 @@ def main():
         print(t.round(3).to_string(index=False))
     breakdowns(df, args.measure)
     spike_tables(df)
+    gap_tables(gev, market, max(0.1, (df["date"].max() - df["date"].min()).days / 365.25))
 
     print(f"\nRound-trip cost to beat: about {round_trip_cost():.2f}% (slippage plus commission "
           f"at a $20 stock).")
