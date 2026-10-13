@@ -29,6 +29,13 @@ Price breaks, long view: a window across an upward break (an untrusted jump)
 is left out; a downward one counts as a real loss. A 90%+ one-day fall counts
 as a break, so those crash days are left out by the universe filter.
 
+GAP-DOWN CAPITULATION (the spike short's gap rule, flipped): after yesterday's
+close is X% (30 / 50 / 70) or more below the highest close of the last 10 bars,
+buy the first day that opens below the prior day's low (by at least --min-gap %),
+at its open or its close (or only if it closes green), next to buying the run's
+first qualifying close with no gap needed. One event per 10 bars. Then the
+--gap-pick run size split by gap size, run size, S&P trend and price, and by year.
+
 The pick (--pick, default 3:30 = a 30%+ fall over 3 days) then gets tables split
 by what was known at the entry close, by 5-year block and by year. One split is
 "dropped from an S&P index in the last 20 bars", the forced-selling case the
@@ -39,6 +46,7 @@ HOW TO RUN:
   python crash_rebound/crash_events.py --start 2010-01-01 --pick 1:20
   python crash_rebound/crash_events.py --start 2010-01-01 --entry next_open
   python crash_rebound/crash_events.py --start 2010-01-01 --sample 10      # events to check on a chart
+  python crash_rebound/crash_events.py --start 2010-01-01 --gap-pick 50 --min-gap 2
 """
 
 import argparse
@@ -65,6 +73,9 @@ MAIN_H = 10
 GAP_BARS = 10          # one event per crash: no fall of the same kind in the 10 bars before
 INDEX_DROP_BARS = 20   # "dropped from an S&P index" = its index went down within this many bars
 VOL_BASE = (-25, -6)
+GAP_RUNS = [30, 50, 70]          # run size: % below the highest close of the last RUN_BARS bars
+RUN_BARS = 10
+GAP_BUCKETS = [(0, 2), (2, 5), (5, 10), (10, 20), (20, 101)]   # % the open is below the prior low
 
 
 def shift(arr, k, codes):
@@ -250,6 +261,130 @@ def thirds(ev, col, label):
             (f"{label} high third (>= {hi:.1f})", lambda e: e[col] >= hi)]
 
 
+def next_row(arr, codes):
+    """arr one row later (the next bar of the same stock), NaN at a stock's last bar."""
+    out = np.full(len(arr), np.nan, dtype=np.float64)
+    out[:-1] = arr[1:]
+    out[:-1][codes[:-1] != codes[1:]] = np.nan
+    return out
+
+
+def run_from_high(c, codes, bars=RUN_BARS):
+    """% the close is below the highest close of the `bars` bars ending with it
+    (negative = down). NaN until a stock has `bars` bars."""
+    hi = c.copy()
+    for k in range(1, bars):
+        hi = np.fmax(hi, shift(c, k, codes))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        run = (c / hi - 1) * 100
+    run[np.isnan(shift(c, bars - 1, codes))] = np.nan
+    return run
+
+
+def first_in(cand, codes, bars=RUN_BARS):
+    """cand, but only where it wasn't also true in the previous `bars` rows of that stock."""
+    seen = np.zeros(len(cand), dtype=bool)
+    for k in range(1, bars + 1):
+        seen |= shift_bool(cand, k, codes)
+    return cand & ~seen
+
+
+def gap_down_signals(df, codes, keep, thr, min_gap):
+    """Signal rows s (the run is known at s's close) for the gap-down capitulation buy:
+      run      rows where the close is thr % or more below the 10-bar high close
+      gap      run rows whose NEXT bar opens min_gap % or more below this bar's low
+    Each the first of its kind in RUN_BARS bars, and the stock passes the universe on s.
+    Also returns the next bar's gap % (negative = below the low) and whether it closed green."""
+    c = df["close"].to_numpy(np.float64)
+    lo = df["low"].to_numpy(np.float64)
+    o_next = next_row(df["open"].to_numpy(np.float64), codes)
+    c_next = next_row(c, codes)
+    in_run = run_from_high(c, codes) <= -thr
+    with np.errstate(invalid="ignore", divide="ignore"):
+        gap_pct = (o_next / lo - 1) * 100
+    gap = in_run & (gap_pct < -min_gap)
+    return {"run": first_in(in_run, codes) & keep, "gap": first_in(gap, codes) & keep,
+            "gap_pct": gap_pct, "green_next": c_next > o_next}
+
+
+GAP_WAYS = [   # (name, short name, signal, entry, entry row offset, extra condition)
+    ("run day, buy close", "run_close", "run", "close", 0, None),
+    ("gap-down, buy open", "gap_open", "gap", "next_open", 0, None),
+    ("gap-down, buy close", "gap_close", "gap", "close", 1, None),
+    ("gap-down + green, buy close", "gap_green", "gap", "close", 1, "green_next"),
+]
+
+
+def gap_way_events(df, codes, market, sig, way):
+    name, short, flag, entry, off, extra = way
+    m = sig[flag].copy()
+    if extra:
+        m &= sig[extra]
+    s = np.flatnonzero(m)
+    rows = s + off
+    c = df["close"].to_numpy(np.float64)
+    ev = pd.DataFrame({"row": s, "symbol": df["symbol"].to_numpy()[s], "date": df["date"].to_numpy()[s],
+                       "price": df["unadj_close"].to_numpy(np.float64)[s],
+                       "run": run_from_high(c, codes)[s], "gap_pct": sig["gap_pct"][s]})
+    for k, v in forward(df, codes, rows, market, entry).items():
+        ev[k] = v
+    return ev
+
+
+def gap_tables(df, codes, keep, market, years, args):
+    cost = round_trip_cost()
+    show = ["events", "per_yr", "raw1", "raw5", f"raw{MAIN_H}", "raw20", f"med{MAIN_H}", f"up{MAIN_H}_%",
+            "worst5%", f"net{MAIN_H}", f"t{MAIN_H}", "delist_%"]
+    rows, sigs = [], {}
+    for thr in sorted(set(GAP_RUNS + [args.gap_pick])):
+        sigs[thr] = gap_down_signals(df, codes, keep, thr, args.min_gap)
+        if thr not in GAP_RUNS:
+            continue
+        for way in GAP_WAYS:
+            st = stats(gap_way_events(df, codes, market, sigs[thr], way), years)
+            rows.append({"run<=": -thr, "way in": way[0], **{k: st.get(k) for k in show}})
+    print(f"\nGAP-DOWN CAPITULATION: yesterday's close is X% or more below the highest close of the last "
+          f"{RUN_BARS} bars; gap-down = opens {args.min_gap:g}%+ below the prior day's low. Each way in is the "
+          f"first of its kind in {RUN_BARS} bars. Raw % returns of a long; net{MAIN_H} after a {cost:.2f}% "
+          f"round trip.")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    thr = args.gap_pick
+    ev = gap_way_events(df, codes, market, sigs[thr], GAP_WAYS[1])
+    if ev.empty:
+        print(f"\nNo gap-down events for runs of {thr:g}%.")
+        return ev
+    ev = ev.merge(datastore.load_market(["spx_above200"]), on="date", how="left")
+    g = -ev["gap_pct"]
+    splits = [("all", np.ones(len(ev), dtype=bool))]
+    splits += [(f"gap {a}-{b}% below the low" if b < 101 else f"gap {a}%+ below the low",
+                ((g >= a) & (g < b)).to_numpy()) for a, b in GAP_BUCKETS]
+    r = -ev["run"]
+    lo_t, hi_t = r.quantile(1 / 3), r.quantile(2 / 3)
+    splits += [(f"run low third (< {lo_t:.0f}% down)", (r < lo_t).to_numpy()),
+               ("run middle third", ((r >= lo_t) & (r < hi_t)).to_numpy()),
+               (f"run high third (>= {hi_t:.0f}% down)", (r >= hi_t).to_numpy()),
+               ("S&P above its 200d", (ev["spx_above200"] == 1).to_numpy()),
+               ("S&P below its 200d", (ev["spx_above200"] != 1).to_numpy()),
+               ("price $5-10", (ev["price"] < 10).to_numpy()),
+               ("price $10-30", ((ev["price"] >= 10) & (ev["price"] < 30)).to_numpy()),
+               ("price $30+", (ev["price"] >= 30).to_numpy())]
+    rows = [{"split": n, **{k: stats(ev.loc[m], years).get(k) for k in show}} for n, m in splits]
+    print(f"\nGap-down, buy open, runs of {thr:g}%+ down, split by what was known at the open "
+          f"(price = printed close the day before):")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    rows = []
+    for y, gy in ev.groupby(ev["date"].dt.year):
+        st = stats(gy, 1.0)
+        rows.append({"year": y, **{k: st.get(k) for k in ["events", "raw5", f"raw{MAIN_H}", f"med{MAIN_H}",
+                                                          f"net{MAIN_H}"]},
+                     "sum_net": st["events"] * st[f"net{MAIN_H}"] / 100})
+    print(f"\nGap-down, buy open, runs of {thr:g}%+ down, by year (sum_net in position sizes):")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+    return ev
+
+
 def block_of(dates):
     y = pd.to_datetime(pd.Series(dates)).dt.year // 5 * 5
     return (y.astype(str) + "-" + (y + 4).astype(str)).to_numpy()
@@ -267,7 +402,12 @@ def main():
     parser.add_argument("--entry", choices=["close", "next_open"], default="close")
     parser.add_argument("--pick", type=str, default="3:30",
                         help="days:fall%% for the split, block and year tables, e.g. 1:20")
-    parser.add_argument("--sample", type=int, default=0, help="Print N random pick events to check on a chart")
+    parser.add_argument("--gap-pick", type=float, default=50,
+                        help="Run size (%% down from the 10-bar high) for the gap-down split and year tables")
+    parser.add_argument("--min-gap", type=float, default=0,
+                        help="The gap-down open must be at least this %% below the prior day's low")
+    parser.add_argument("--sample", type=int, default=0,
+                        help="Print N random pick and gap-down events to check on a chart")
     parser.add_argument("--save-events", type=str, default=None, help="Write the pick's events to this CSV")
     parser.add_argument("--no-log", action="store_true", help="Don't add a row to the research log")
     args = parser.parse_args()
@@ -326,6 +466,14 @@ def main():
           f"minus a {cost:.2f}% round trip.")
     print(pd.DataFrame(rows).round(2).to_string(index=False))
 
+    gev = gap_tables(df, codes, keep, market, years, args)
+    if args.sample and not gev.empty:
+        s = gev.sample(min(args.sample, len(gev)), random_state=1).sort_values("date")
+        s = s.assign(run=s["run"].round(1), gap_pct=s["gap_pct"].round(1), price=s["price"].round(2),
+                     ret10=(s[f"r{MAIN_H}"] * 100).round(1))
+        print(f"\n{len(s)} random gap-down events (date = the day before the gap; buy the next open):")
+        print(s[["symbol", "date", "run", "gap_pct", "price", "ret10"]].to_string(index=False))
+
     if pick.empty:
         print(f"\nNo events for the pick {args.pick}.")
         return
@@ -374,7 +522,8 @@ def main():
         research_log.append(
             question="Do stocks bounce after a 20-50% fall in 1 or 3 days?",
             phase="crash", split=args.universe, script="crash_rebound/crash_events.py",
-            params={**P, "start": args.start, "end": args.end, "entry": args.entry, "pick": args.pick},
+            params={**P, "start": args.start, "end": args.end, "entry": args.entry, "pick": args.pick,
+                    "gap_pick": args.gap_pick, "min_gap": args.min_gap},
             combinations=len(DAYS) * len(FALLS), runs=1,
             results={k: (round(float(v), 3) if v is not None and np.isfinite(v) else None)
                      for k, v in s.items()})
