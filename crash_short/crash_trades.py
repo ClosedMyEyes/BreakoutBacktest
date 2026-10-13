@@ -126,10 +126,11 @@ def bounce_level(panel, sig, level, days=DAYS):
     return c[sig] * (1 + float(level) / 100.0)
 
 
-def crash_candidates(panel, ev, entry, level="10", fill="open", bars=5):
+def crash_candidates(panel, ev, entry, level="10", fill="open", bars=5, touch_margin=0.0):
     """The events as engine entries: short the event close, the next open, or a
     bounce into `level` within `bars` bars (fill: open = only on an open at or above
-    it; touch = a limit order at it). signal_row is always the crash day."""
+    it; touch = a limit order at it, counted only when the high clears it by
+    touch_margin %). signal_row is always the crash day."""
     sig = ev["row"].to_numpy()
     if entry == "close":
         e, raw, at_close = sig, panel.c[sig], np.ones(len(sig), dtype=bool)
@@ -144,7 +145,7 @@ def crash_candidates(panel, ev, entry, level="10", fill="open", bars=5):
             k = np.minimum(sig + j, len(panel.o) - 1)
             ok = (e < 0) & (sig + j <= last)
             at_open = ok & (panel.o[k] >= line)
-            at_line = ok & ~at_open & (fill == "touch") & (panel.h[k] >= line)
+            at_line = ok & ~at_open & (fill == "touch") & (panel.h[k] >= line * (1 + touch_margin / 100.0))
             e[at_open | at_line] = k[at_open | at_line]
             raw[at_open] = panel.o[k][at_open]
             raw[at_line] = line[at_line]
