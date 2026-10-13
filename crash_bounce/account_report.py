@@ -44,7 +44,7 @@ from params import collect  # noqa: E402
 import crash_trades as ct  # noqa: E402
 import bounce_short as bs  # noqa: E402
 
-BOUNCE_RULE = "prev:touch:1:0"   # frozen 2026-10-13, holdout passed
+BOUNCE_RULE = bs.FROZEN          # frozen 2026-10-13, holdout passed
 R_PCT = 25.0                     # 1R = 25% of the position, the spike short's stop distance
 
 
