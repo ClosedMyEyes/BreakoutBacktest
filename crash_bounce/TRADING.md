@@ -39,7 +39,7 @@ Before the open, check that each stock on the order list can be borrowed.
 
 It marks:
 
-- **Crash days:** a purple triangle under the bar, with a dotted line at the limit for the next session.
+- **Crash days:** a purple triangle under the bar and a purple shade over it, with a dotted line at the limit for the next session. The shade can be turned off under Settings, then Style ("Crash day background").
 - **Entries the backtest took:** a red S, with a dashed line at the fill price out to the cover.
 - **Covers:** a gray x on the 10th bar after the entry.
 - **A crash on the last bar:** a label with the limit for the next session.

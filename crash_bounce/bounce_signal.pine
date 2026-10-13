@@ -40,7 +40,8 @@ entry = crash[1] and high >= limitPx[1]
 fillPx = open >= limitPx[1] ? open : limitPx[1]
 cover = ta.barssince(entry) == holdBars
 
-plotshape(crash, "Crash day", shape.triangleup, location.belowbar, color.purple, size = size.tiny)
+plotshape(crash, "Crash day", shape.triangleup, location.belowbar, color.purple, size = size.small)
+bgcolor(crash ? color.new(color.purple, 75) : na, title = "Crash day background")
 plotshape(entry, "Short entry", shape.labeldown, location.abovebar, color.red, text = "S", textcolor = color.white, size = size.tiny)
 plotshape(cover, "Cover", shape.xcross, location.abovebar, color.gray, size = size.tiny)
 if crash
