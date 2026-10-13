@@ -138,3 +138,15 @@ def test_target_counts_on_the_time_exits_last_day_only():
     assert t["exit_reason"][0] == "time exit" and t["exit_row"][0] == 75
     t, _ = bs.bounce_trades(p, events(p), "r38", "touch", 5, "0", 10, ARGS, target=1.5)
     assert t["exit_reason"][0] == "time exit"           # 1.5x is 8.65; it bottoms at 9.0 after the entry
+
+
+def test_touch_margin_needs_the_high_to_clear_the_line():
+    highs = list(CRASH)
+    highs[73] = 10.55                                     # 0.5% above prev (10.5), the close before the crash day
+    p = panel_from_closes(CRASH, highs=highs)
+    t, _ = bs.bounce_trades(p, events(p), "prev", "touch", 1, "0", 10, ARGS)
+    assert list(t["entry_row"]) == [73] and t["entry_raw"][0] == pytest.approx(10.5)
+    t, _ = bs.bounce_trades(p, events(p), "prev", "touch", 1, "0", 10, ARGS, margin=1.0)
+    assert t.empty
+    t, _ = bs.bounce_trades(p, events(p), "prev", "touch", 1, "0", 10, ARGS, margin=0.4)
+    assert t["entry_raw"][0] == pytest.approx(10.5)        # still filled at the line, not at the high

@@ -90,6 +90,7 @@ FILLS = ct.BOUNCE_FILLS
 WINDOWS = "1,2,5"
 STOPS = "0,25,40,60,100,25c,40c,60c,pre"
 HOLDS = "5,10,20"
+TOUCH_MARGINS = [0.5, 1.0, 2.0]   # the fill check: % the high must clear the line by
 TARGETS = "0,0.5,0.9,1,1.5"   # multiples of the distance from the short price to the crash low; 0 = none
 PICK = "r38:touch:5:0"
 PRE = "pre"
@@ -153,9 +154,10 @@ def take_profit(panel, t, lines, p):
     return ct.cover(panel, t, idx, np.asarray(ks, dtype=int), prices, p, "target")
 
 
-def bounce_trades(panel, ev, level, fill, bars, stop, hold, args, target=0.0):
-    """The bounce short's trades for one level, fill, window, stop, hold and target."""
-    cand = ct.crash_candidates(panel, ev, "bounce", level, fill, bars)
+def bounce_trades(panel, ev, level, fill, bars, stop, hold, args, target=0.0, margin=0.0):
+    """The bounce short's trades for one level, fill, window, stop, hold and target.
+    margin: a touch fill at the line counts only when the high clears it by this %."""
+    cand = ct.crash_candidates(panel, ev, "bounce", level, fill, bars, margin)
     family = f"{level}:{fill}:{bars}:{stop}"
     p = ss.exit_params(0, hold, args.borrow_pct, args.slippage_pct)
     if stop != PRE:
@@ -191,6 +193,9 @@ def main():
                         help="Cover target for the pick, a multiple of the distance from the short price to the "
                              "crash low: 0.5 = half way, 1 = the crash low, 1.5 = beyond it; 0 = none")
     parser.add_argument("--targets", type=str, default=TARGETS, help="Targets to test on the pick")
+    parser.add_argument("--touch-margin", type=float, default=0.0,
+                        help="Stress: a touch fill at the line counts only when the day's high clears the line by "
+                             "this %% (still filled at the line)")
     args = parser.parse_args()
     P = collect(args, ["universe"])
     t0 = time.time()
@@ -210,8 +215,9 @@ def main():
     D = ct.load_crashes(args, P)
     panel, ev, years = D.panel, D.ev, D.years
 
-    def run(lv=level, fl=fill, br=bars, st=stop, hold=args.hold, target=args.target, events=None):
-        return bounce_trades(panel, ev if events is None else events, lv, fl, br, st, hold, args, target)
+    def run(lv=level, fl=fill, br=bars, st=stop, hold=args.hold, target=args.target, events=None,
+            margin=args.touch_margin):
+        return bounce_trades(panel, ev if events is None else events, lv, fl, br, st, hold, args, target, margin)
 
     def exits(t):
         if t.empty:
@@ -231,8 +237,18 @@ def main():
             tr = run(hold=h, target=x)[0]
             by_exit.append({"hold": h, "target": target_name(x), **summ(tr, h), **exits(tr)})
     by_exit = pd.DataFrame(by_exit)
-    pick = args.pick + (f" target {target_name(args.target)}" if args.target else "")
+    pick = args.pick + (f" target {target_name(args.target)}" if args.target else "") + \
+        (f" touch margin {args.touch_margin:g}%" if args.touch_margin else "")
     t, cand = run()
+    fills = None
+    if fill == "touch" and not t.empty:
+        at_open = np.isclose(t["entry_raw"].to_numpy(), panel.o[t["entry_row"].to_numpy()])
+        fills = [{"fills": "all, as run", **summ(t)},
+                 {"fills": "at the open (it opened at or above the line)", **summ(t[at_open])},
+                 {"fills": "at the line (the day's high reached it)", **summ(t[~at_open])}]
+        fills += [{"fills": f"count a fill at the line only if the high cleared it by {m:g}%+",
+                   **summ(run(margin=m)[0])} for m in TOUCH_MARGINS if m > args.touch_margin]
+        fills = pd.DataFrame(fills)
 
     pd.set_option("display.width", 250)
     print("=" * 100)
@@ -263,6 +279,11 @@ def main():
           f"the entry to cover at the close if the target isn't hit (target none = the plain time exit). "
           f"target_hit_% = share covered at the target; avg_bars = bars held.")
     print(by_exit.round(2).to_string(index=False))
+    if fills is not None:
+        print(f"\nTouch fill check on the pick: is the edge in fills that only just reached the line? The margin rows "
+              f"count a fill at the line only when the day's high cleared it by that much (still filled at the "
+              f"line), as if a limit order resting at the line had not been reached in the queue.")
+        print(fills.round(2).to_string(index=False))
 
     if t.empty:
         print(f"\nNo trades for the pick {pick}")
@@ -280,7 +301,7 @@ def main():
     print(f"\n{PASS_BAR}")
 
     if not args.no_log:
-        runs = len(grid) + len(by_stop) + len(by_exit) + 1
+        runs = len(grid) + len(by_stop) + len(by_exit) + 1 + (len(fills) - 3 if fills is not None else 0)
         research_log.append(
             question=f"Crash bounce short, pick {pick} hold {args.hold}, filters: {'; '.join(D.on) or 'none'}",
             phase="crash_bounce", split=args.universe, script="crash_bounce/bounce_short.py",
