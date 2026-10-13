@@ -191,6 +191,20 @@ python crash_short/crash_short.py --start 2010-01-01 --entry next_open
 python crash_short/crash_short.py --start 2010-01-01 --sample 10
 ```
 
+`crash_short/crash_trades.py` trades the same rule through the short engine, as `spike_short.py` does:
+a grid of close / next-open entries and stops of none / 15 / 25 / 40%, with slippage, commission, borrow
+and dividends charged (and 100%/yr borrow as a stress). It adds 5-year blocks, years, exit reasons, a
+squeeze table, and an account test (`--sizes`) that runs the crash short alone, the live spike short
+alone and both in one account. Each trade is marked if the live spike rule had a setup on the same
+stock in the 20 bars up to the crash or in the year before (`--skip-spike N` leaves those out). The
+holdout pass bar is printed at the end of every run.
+
+```
+python crash_short/crash_trades.py --start 2010-01-01
+python crash_short/crash_trades.py --start 2010-01-01 --pick close:25 --sample 10
+python crash_short/crash_trades.py --start 2010-01-01 --sizes 2.5,5,10
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
@@ -244,7 +258,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
 | `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
-| `crash_short/` | Short crashes that follow a run-up |
+| `crash_short/` | Short crashes that follow a run-up: the event study, then real trades with stops |
 | `crash_rebound/` | Crash rebound: returns after a big 1 or 3-day fall |
 | `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
 | `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
