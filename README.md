@@ -217,6 +217,32 @@ python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25c --sizes 
 python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25c --bounce-level r38 --bounce-fill touch
 ```
 
+## Crash bounce short
+
+The crash short's bounce entry, split into its own setup in its own folder, `crash_bounce/`, because it
+made the most a trade on Dev. `crash_bounce/bounce_short.py` takes the same crash event and shorts the
+relief rally into a line known at the crash close. `--pick LEVEL:FILL:WINDOW:STOP` sets the trade:
+
+- level: `10` / `20` (% above the crash close), `r25` / `r38` / `r50` (that share of the 3-day fall won
+  back), or `prev` (the close before the crash day)
+- fill: `open` (only an open at or above the line) or `touch` (a limit order resting at the line)
+- window: the bars after the crash the line has to be reached in (1 = the next day only)
+- stop: `0` (none), `25` (intraday), `25c` (judged on the close), or `pre` (cover the next open after a
+  close back at or above the close the 3-day fall started from)
+
+It prints every level x fill x window (`--windows 1,2,5`) at the pick's stop, the pick with each stop
+(`--stops`) and each hold (`--holds 5,10,20`), the filter table, then the pick by block and year, exit
+reasons, the squeeze table and, with `--sizes`, the account test with the live spike short. It shares the
+filter flags and the cost settings with `crash_trades.py`. The holdout pass bar is printed at the end of
+every run.
+
+```
+python crash_bounce/bounce_short.py --start 2010-01-01
+python crash_bounce/bounce_short.py --start 2010-01-01 --pick r38:touch:2:0 --sizes 2.5,5,10
+python crash_bounce/bounce_short.py --start 2010-01-01 --pick prev:touch:5:pre --sample 10
+python crash_bounce/bounce_short.py --start 2010-01-01 --skip-spike 20
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
@@ -271,6 +297,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
 | `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
 | `crash_short/` | Short crashes that follow a run-up: the event study, then real trades with stops |
+| `crash_bounce/` | Short the relief rally after a crash, at a line known at the crash close |
 | `crash_rebound/` | Crash rebound: returns after a big 1 or 3-day fall |
 | `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
 | `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
@@ -325,7 +352,7 @@ for full-history runs.
 ## Tests
 
 ```
-python -m pytest tests index_changes crash_rebound crash_short
+python -m pytest tests index_changes crash_rebound crash_short crash_bounce
 ```
 
 Hand-built price paths cover every fill and exit rule, the eight template rules, no look-ahead, forward labels,
