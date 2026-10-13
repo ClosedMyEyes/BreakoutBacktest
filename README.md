@@ -177,6 +177,20 @@ python crash_rebound/crash_events.py --start 2010-01-01 --entry next_open
 python crash_rebound/crash_events.py --start 2010-01-01 --gap-pick 50 --min-gap 2
 ```
 
+## Crash-keeps-falling short
+
+A lead from the crash rebound study: crashes kept falling when the stock had run up first. It lives in
+its own folder, `crash_short/`. `crash_short/crash_short.py` shorts the first day of a 3-day 30%+ fall after
+a 20%+ rise over the 60 days before (the rule stated before the run), covers after 10 days, and prints the
+short's result after costs and borrow (5%/yr, and 100%/yr as a stress), the squeezes (p95, share whose high
+went 25%+ above the entry), a grid of fall size x prior move, splits, 5-year blocks and years.
+
+```
+python crash_short/crash_short.py --start 2010-01-01
+python crash_short/crash_short.py --start 2010-01-01 --entry next_open
+python crash_short/crash_short.py --start 2010-01-01 --sample 10
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
@@ -230,6 +244,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
 | `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
+| `crash_short/` | Short crashes that follow a run-up |
 | `crash_rebound/` | Crash rebound: returns after a big 1 or 3-day fall |
 | `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
 | `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
@@ -284,7 +299,7 @@ for full-history runs.
 ## Tests
 
 ```
-python -m pytest tests index_changes crash_rebound
+python -m pytest tests index_changes crash_rebound crash_short
 ```
 
 Hand-built price paths cover every fill and exit rule, the eight template rules, no look-ahead, forward labels,

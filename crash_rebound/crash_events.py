@@ -109,13 +109,15 @@ def fall_events(c, codes, days, thr, gap_bars=GAP_BARS):
     return hit & ~seen
 
 
-def forward(df, codes, rows, market, entry="close"):
-    """Raw and vs-S&P forward returns (fractions) for event rows, long view."""
+def forward(df, codes, rows, market, entry="close", side="long"):
+    """Raw and vs-S&P forward returns (fractions) for event rows. Long view: a window
+    across an upward price break is left out (an untrusted gain). side="short": a
+    window across a downward break is left out instead (needs bad_bar_dn)."""
     c = df["close"].to_numpy(np.float64)
     o = df["open"].to_numpy(np.float64)
     idx = np.arange(len(df))
     last = pd.Series(idx).groupby(codes).transform("max").to_numpy()[rows]
-    up = (df["bad_bar"].fillna(0) > 0).to_numpy()
+    up = (df["bad_bar" if side == "long" else "bad_bar_dn"].fillna(0) > 0).to_numpy()
     cu = np.cumsum(up)
     dates = df["date"].to_numpy()
     m = market.sort_values("date").set_index("date")
