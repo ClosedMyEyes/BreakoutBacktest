@@ -130,8 +130,8 @@ def test_close_stop_covers_the_next_open_after_a_close_through_it():
     p = panel_from_closes(closes, opens)
     ev = ct.crash_events(p, np.ones(len(closes), dtype=bool))
     xp = {**ss.exit_params(0, 10, 0.0), **NO_COST}
-    t = engine_short.run_signals(p, ct.crash_candidates(p, ev, "next_open"), xp)
-    t = ct.close_stop(p, t, 25, xp)
+    cand = ct.crash_candidates(p, ev, "next_open")
+    t = ct.close_stop(p, ct.add_entry_raw(engine_short.run_signals(p, cand, xp), cand), 25, xp)
     assert t["exit_reason"][0] == "stopped (close)" and t["exit_row"][0] == 77
     assert t["ret_pct"][0] == pytest.approx((9.2 - 11.0) / 9.2 * 100)
     assert t["exit_date"][0] == p.date[77]
@@ -143,7 +143,8 @@ def test_close_stop_ignores_an_intraday_squeeze_that_fades():
     p = panel_from_closes(CRASH, OPENS, highs)
     ev = ct.crash_events(p, np.ones(len(CRASH), dtype=bool))
     xp = {**ss.exit_params(0, 10, 0.0), **NO_COST}
-    t = ct.close_stop(p, engine_short.run_signals(p, ct.crash_candidates(p, ev, "next_open"), xp), 25, xp)
+    cand = ct.crash_candidates(p, ev, "next_open")
+    t = ct.close_stop(p, ct.add_entry_raw(engine_short.run_signals(p, cand, xp), cand), 25, xp)
     assert t["exit_reason"][0] == "time exit" and t["exit_row"][0] == 83
 
 
@@ -152,11 +153,11 @@ def test_bounce_entry_is_the_first_open_far_enough_above_the_crash_close():
     opens[74], opens[75] = 10.6, 11.0                    # 11.6% then 15.8% above the 9.5 crash close
     p = panel_from_closes(CRASH, opens)
     ev = ct.crash_events(p, np.ones(len(CRASH), dtype=bool))
-    c = ct.crash_candidates(p, ev, "bounce", bounce_pct=10, bounce_bars=5)
+    c = ct.crash_candidates(p, ev, "bounce", level="10", bars=5)
     assert list(c["signal_row"]) == [72] and list(c["entry_row"]) == [74]
     assert c["entry_raw"][0] == pytest.approx(10.6) and not c["at_close"][0]
-    assert len(ct.crash_candidates(p, ev, "bounce", bounce_pct=20, bounce_bars=5)["entry_row"]) == 0
-    assert len(ct.crash_candidates(p, ev, "bounce", bounce_pct=10, bounce_bars=1)["entry_row"]) == 0
+    assert len(ct.crash_candidates(p, ev, "bounce", level="20", bars=5)["entry_row"]) == 0
+    assert len(ct.crash_candidates(p, ev, "bounce", level="10", bars=1)["entry_row"]) == 0
 
 
 def test_parse_stop_and_window_mean():
@@ -167,3 +168,42 @@ def test_parse_stop_and_window_mean():
     m = ct.window_mean(x, sym, np.array([4, 2, 6, -1]), 3)
     assert m[0] == pytest.approx(3.0) and m[1] == pytest.approx(1.0)
     assert np.isnan(m[2]) and np.isnan(m[3])            # reaches back into the other stock / before the data
+
+
+def test_bounce_levels_known_at_the_crash_close():
+    p = panel_from_closes(CRASH, OPENS)
+    sig = np.array([72])                                  # fell from 14 (bar 69) to 9.5; closed 10.5 the day before
+    assert ct.bounce_level(p, sig, "10")[0] == pytest.approx(9.5 * 1.1)
+    assert ct.bounce_level(p, sig, "r50")[0] == pytest.approx(9.5 + (14 - 9.5) / 2)
+    assert ct.bounce_level(p, sig, "prev")[0] == pytest.approx(10.5)
+
+
+def test_touch_fill_shorts_at_the_level_when_the_high_reaches_it():
+    highs = list(np.maximum(CRASH, OPENS))
+    highs[74] = 11.0                                      # opens 9.0, trades up to 11.0: through the 10.45 line
+    p = panel_from_closes(CRASH, OPENS, highs)
+    ev = ct.crash_events(p, np.ones(len(CRASH), dtype=bool))
+    assert len(ct.crash_candidates(p, ev, "bounce", level="10", fill="open")["entry_row"]) == 0
+    c = ct.crash_candidates(p, ev, "bounce", level="10", fill="touch")
+    assert list(c["entry_row"]) == [74] and c["entry_raw"][0] == pytest.approx(9.5 * 1.1)
+    opens = list(OPENS)
+    opens[74] = 10.8                                      # opens above the line: filled at the open
+    highs[74] = 11.0
+    c = ct.crash_candidates(panel_from_closes(CRASH, opens, highs), ev, "bounce", level="10", fill="touch")
+    assert c["entry_raw"][0] == pytest.approx(10.8)
+
+
+def test_close_stop_uses_the_level_as_the_short_price_for_a_touch_fill():
+    highs = list(np.maximum(CRASH, OPENS))
+    highs[74] = 11.0
+    closes = list(CRASH)
+    closes[74] = 13.2                                     # closes 26% above the 10.45 short on the entry day
+    opens = list(OPENS)
+    opens[75] = 12.5
+    p = panel_from_closes(closes, opens, np.maximum(highs, closes))
+    ev = ct.crash_events(p, np.ones(len(closes), dtype=bool))
+    cand = ct.crash_candidates(p, ev, "bounce", level="10", fill="touch")
+    xp = {**ss.exit_params(0, 10, 0.0), **NO_COST}
+    t = ct.close_stop(p, ct.add_entry_raw(engine_short.run_signals(p, cand, xp), cand), 25, xp)
+    assert t["exit_reason"][0] == "stopped (close)" and t["exit_row"][0] == 75
+    assert t["ret_pct"][0] == pytest.approx((10.45 - 12.5) / 10.45 * 100)

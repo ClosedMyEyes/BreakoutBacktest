@@ -17,10 +17,20 @@ The rule (frozen in crash_short.py; the entry, the stop and the filters below ar
   filter  the stock rose 20%+ over the 60 bars before the fall
   entry   close     short that close
           next_open short the next open
-          bounce    short the first open in the --bounce-bars bars after the crash
-                    that is --bounce-pct% or more above the crash-day close (a
-                    relief gap; the first Dev run found next opens 10%+ above the
-                    crash close made +17% a trade on 44 trades)
+          bounce    short a relief rally into a resistance level within the
+                    --bounce-bars bars after the crash (the first Dev run found next
+                    opens 10%+ above the crash close made +17% a trade on 44 trades).
+                    --bounce-level sets the level, known at the crash-day close:
+                      10    10% above the crash-day close
+                      r38   38% of the 3-day fall won back (between the crash close
+                            and the close the fall started from)
+                      prev  the close the day before the crash day
+                    --bounce-fill sets how it is shorted:
+                      open  only when a day opens at or above the level (at that open)
+                      touch a short limit order resting at the level: filled at the
+                            open if it opens above, else at the level if the day's
+                            high reaches it
+                    The bounce table compares the levels and both fills at the pick's stop.
   exit    a stop, else cover at the close 10 bars after the entry. Stops:
           25        intraday, 25% above the short price (filled at the open if the
                     stock gaps through it)
@@ -51,7 +61,7 @@ HOW TO RUN:
   python crash_short/crash_trades.py --start 2010-01-01
   python crash_short/crash_trades.py --start 2010-01-01 --pick next_open:40c --sample 10
   python crash_short/crash_trades.py --start 2010-01-01 --skip-spike 20 --min-vol-x 2 --market above200 --need-200d
-  python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25 --bounce-pct 10 --bounce-bars 5
+  python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25c --bounce-level r38 --bounce-fill touch
   python crash_short/crash_trades.py --start 2010-01-01 --stop-slip 5
   python crash_short/crash_trades.py --start 2010-01-01 --sizes 2.5,5,10    # account test, alone and with the spike short
 
@@ -84,6 +94,8 @@ import crash_events as ce  # noqa: E402
 DAYS, FALL, RUN_MIN = 3, 30.0, 20.0      # the frozen rule
 ENTRIES = ["close", "next_open", "bounce"]
 STOPS = "0,25,40,60,100,25c,40c,60c"     # % above the short price; c = judged on the close; 0 = none
+BOUNCE_LEVELS = ["5", "10", "15", "20", "r25", "r38", "r50", "prev"]
+BOUNCE_FILLS = ["open", "touch"]
 HARD_BORROW_PCT = 100.0
 SPIKE_RULE = {"bars": 10, "gain": 100.0, "min_gap": 2.0, "stop": 25.0, "hold": 10}   # spike_scan.RULE
 OVERLAP_BARS = [20, 252]
@@ -99,10 +111,22 @@ def crash_events(panel, keep, days=DAYS, fall=FALL, run_min=RUN_MIN):
     return ev[ev["run60"] >= run_min].reset_index(drop=True)
 
 
-def crash_candidates(panel, ev, entry, bounce_pct=10.0, bounce_bars=5):
-    """The events as engine entries: short the event close, the next open, or the
-    first open within bounce_bars bars that is bounce_pct% above the event close.
-    signal_row is always the crash day."""
+def bounce_level(panel, sig, level, days=DAYS):
+    """The resistance level for each crash row, known at its close: '10' = 10% above
+    the crash close, 'r38' = 38% of the fall won back, 'prev' = the prior day's close."""
+    c = panel.c
+    level = str(level)
+    if level == "prev":
+        return c[sig - 1]
+    if level.startswith("r"):
+        return c[sig] + (c[sig - days] - c[sig]) * float(level[1:]) / 100.0
+    return c[sig] * (1 + float(level) / 100.0)
+
+
+def crash_candidates(panel, ev, entry, level="10", fill="open", bars=5):
+    """The events as engine entries: short the event close, the next open, or a
+    bounce into `level` within `bars` bars (fill: open = only on an open at or above
+    it; touch = a limit order at it). signal_row is always the crash day."""
     sig = ev["row"].to_numpy()
     if entry == "close":
         e, raw, at_close = sig, panel.c[sig], np.ones(len(sig), dtype=bool)
@@ -110,16 +134,20 @@ def crash_candidates(panel, ev, entry, bounce_pct=10.0, bounce_bars=5):
         sig = sig[panel.has_next[sig]]                  # no next bar: the stock stopped trading
         e, raw, at_close = sig + 1, panel.o[sig + 1], np.zeros(len(sig), dtype=bool)
     else:
-        line = panel.c[sig] * (1 + bounce_pct / 100.0)
+        line = bounce_level(panel, sig, level)
         last = panel.last_row[sig]
-        e = np.full(len(sig), -1)
-        for j in range(1, bounce_bars + 1):
-            k = sig + j
-            ok = (e < 0) & (k <= last)
-            hit = ok & (panel.o[np.minimum(k, len(panel.o) - 1)] >= line)
-            e[hit] = k[hit]
-        sig, e = sig[e >= 0], e[e >= 0]
-        raw, at_close = panel.o[e], np.zeros(len(sig), dtype=bool)
+        e, raw = np.full(len(sig), -1), np.full(len(sig), np.nan)
+        for j in range(1, bars + 1):
+            k = np.minimum(sig + j, len(panel.o) - 1)
+            ok = (e < 0) & (sig + j <= last)
+            at_open = ok & (panel.o[k] >= line)
+            at_line = ok & ~at_open & (fill == "touch") & (panel.h[k] >= line)
+            e[at_open | at_line] = k[at_open | at_line]
+            raw[at_open] = panel.o[k][at_open]
+            raw[at_line] = line[at_line]
+        keep = e >= 0
+        sig, e, raw = sig[keep], e[keep], raw[keep]
+        at_close = np.zeros(len(sig), dtype=bool)
     ok = np.isfinite(raw) & (raw > 0)
     return {"signal_row": sig[ok], "entry_row": e[ok], "entry_raw": raw[ok],
             "struct_stop": np.full(int(ok.sum()), np.nan), "at_close": at_close[ok]}
@@ -146,8 +174,8 @@ def close_stop(panel, t, pct, p):
     unadj, div = panel.col("unadj_close"), panel.col("div")
     slip, comm = p["slippage_pct"] / 100.0, p["commission"]
     t["stop"] = t["entry"] * (1 + pct / 100.0)
-    for i, e, x, at_close, proceeds in zip(t.index, t["entry_row"], t["exit_row"], t["at_close"], t["entry"]):
-        raw = c[e] if at_close else o[e]
+    for i, e, x, at_close, proceeds, raw in zip(t.index, t["entry_row"], t["exit_row"], t["at_close"],
+                                                t["entry"], t["entry_raw"]):
         first = e + 1 if at_close else e
         hit = np.flatnonzero(c[first:x] >= raw * (1 + pct / 100.0))
         if not len(hit):
@@ -167,12 +195,22 @@ def close_stop(panel, t, pct, p):
     return t
 
 
-def trade(panel, ev, entry, spec, args):
-    """Mode B trades for one entry and stop spec."""
+def add_entry_raw(t, cand):
+    """The price each short was sold at before costs (the open, the close or the bounce level)."""
+    if not t.empty:
+        t["entry_raw"] = t["entry_row"].map(dict(zip(cand["entry_row"], cand["entry_raw"])))
+    return t
+
+
+def trade(panel, ev, entry, spec, args, level=None, fill=None):
+    """Mode B trades for one entry and stop spec (bounce level and fill from args
+    unless given). Adds entry_raw, the price the short was sold at before costs."""
     pct, on_close = parse_stop(spec)
-    cand = crash_candidates(panel, ev, entry, args.bounce_pct, args.bounce_bars)
+    cand = crash_candidates(panel, ev, entry, level or args.bounce_level, fill or args.bounce_fill,
+                            args.bounce_bars)
     p = ss.exit_params(0 if on_close else pct, args.hold, args.borrow_pct, args.slippage_pct)
-    t = engine_short.run_signals(panel, cand, p, args.start, args.end, family=f"{entry}:{spec}")
+    t = add_entry_raw(engine_short.run_signals(panel, cand, p, args.start, args.end, family=f"{entry}:{spec}"),
+                      cand)
     t = close_stop(panel, t, pct, p) if on_close else ss.apply_stop_slip(t, args.stop_slip)
     return t, cand
 
@@ -216,7 +254,8 @@ def add_event_cols(ev, panel, spike_flag, spx_above200, days=DAYS):
     st = rows - days                                     # the close the fall is measured from
     vol = panel.col("volume")
     with np.errstate(invalid="ignore", divide="ignore"):
-        ev["vol_build"] = window_mean(vol, panel.sym, st, 20) / window_mean(vol, panel.sym, st - 20, 100)
+        base = window_mean(vol, panel.sym, st - 20, 100)
+        ev["vol_build"] = np.where(base > 0, window_mean(vol, panel.sym, st, 20) / base, np.nan)
         ev["above_lo52"] = (panel.c[rows] / panel.col("lo52_c")[rows] - 1) * 100
     return ev
 
@@ -241,10 +280,18 @@ def summarize(t, years, hold, borrow_pct):
 
 GAP_BINS = [-np.inf, -20, -10, -5, 0, np.inf]
 GAP_LABELS = ["-20 or worse", "-20 to -10", "-10 to -5", "-5 to 0", "up"]
-NEXT_BINS = [-np.inf, -10, -3, 0, 3, 10, np.inf]
-NEXT_LABELS = ["-10 or worse", "-10 to -3", "-3 to 0", "0 to 3", "3 to 10", "10+"]
+NEXT_BINS = [-np.inf, -10, -3, 0, 3, 10, 20, 30, np.inf]
+NEXT_LABELS = ["-10 or worse", "-10 to -3", "-3 to 0", "0 to 3", "3 to 10", "10 to 20", "20 to 30", "30+"]
+BAR_BINS = [0, 1, 2, 3, 5, np.inf]
+BAR_LABELS = ["1", "2", "3", "4-5", "6+"]
 LO52_BINS = [-np.inf, 0.5, 10, 30, 100, np.inf]
 LO52_LABELS = ["at the low", "0-10", "10-30", "30-100", "100+"]
+
+
+def thirds(x):
+    """ss.thirds with infinities treated as missing (one inf breaks the cut points)."""
+    x = np.asarray(x, np.float64)
+    return ss.thirds(np.where(np.isfinite(x), x, np.nan)).to_numpy()
 
 
 def entry_features(panel, t, ev, spike_flag, spx_above200):
@@ -252,24 +299,25 @@ def entry_features(panel, t, ev, spike_flag, spx_above200):
     e = ev.set_index("row").loc[t["signal_row"].to_numpy()]
     s = t["signal_row"].to_numpy()
     f = pd.DataFrame(index=t.index)
-    f["size of the fall %"] = ss.thirds((-e["fall"]).to_numpy()).to_numpy()
-    f["60-day run-up before %"] = ss.thirds(e["run60"].to_numpy()).to_numpy()
-    f["event-day volume vs usual (x)"] = ss.thirds(e["vol_ratio"].to_numpy()).to_numpy()
+    f["size of the fall %"] = thirds(-e["fall"])
+    f["60-day run-up before %"] = thirds(e["run60"])
+    f["event-day volume vs usual (x)"] = thirds(e["vol_ratio"])
     if "vol_build" in e:
-        f["volume build-up before the fall (x)"] = ss.thirds(e["vol_build"].to_numpy()).to_numpy()
+        f["volume build-up before the fall (x)"] = thirds(e["vol_build"])
         f["crash close above 52-week low %"] = pd.cut(e["above_lo52"].to_numpy(), LO52_BINS, labels=LO52_LABELS)
     f["event-day open vs prior close %"] = pd.cut(e["gap_pct"].to_numpy(), GAP_BINS, labels=GAP_LABELS)
     if not t["at_close"].all():
-        nxt = (panel.o[t["entry_row"].to_numpy()] / panel.c[s] - 1) * 100
-        f["entry open vs event close %"] = pd.cut(np.where(t["at_close"], np.nan, nxt), NEXT_BINS,
-                                                  labels=NEXT_LABELS)
+        nxt = (t["entry_raw"].to_numpy() / panel.c[s] - 1) * 100
+        f["short price vs crash close %"] = pd.cut(np.where(t["at_close"], np.nan, nxt), NEXT_BINS,
+                                                   labels=NEXT_LABELS)
+        f["bars after the crash"] = pd.cut(t["entry_row"].to_numpy() - s, BAR_BINS, labels=BAR_LABELS)
     f["share price $"] = pd.cut(panel.col("unadj_close")[s], ss.PRICE_BINS, right=False,
                                 labels=["5-10", "10-20", "20-50", "50+"])
     f["stock vs its 200d before the fall"] = np.select(
         [e["above200_before"].to_numpy() == 1, e["above200_before"].to_numpy() == 0], ["above", "below"], "no 200d")
     f["S&P vs its 200d"] = np.where(spx_above200.reindex(panel.date[s]).to_numpy() == 1, "above", "below")
     f["in an S&P index"] = np.where(e["in_index"].to_numpy(), "yes", "no")
-    f["liquidity rank"] = ss.thirds(panel.col("dv_pct")[s]).to_numpy()
+    f["liquidity rank"] = thirds(panel.col("dv_pct")[s])
     f["reverse split in past year"] = np.where(ss.reverse_splits_before(panel, s) > 0, "yes", "no")
     for b in OVERLAP_BARS:
         n = "20 bars" if b == 20 else "year"
@@ -293,8 +341,12 @@ def main():
                         help="Stress: intraday stops fill this %% above the stop instead of at it")
     parser.add_argument("--pick", type=str, default="next_open:25",
                         help="ENTRY:STOP for the detail tables, e.g. close:25, next_open:40c, bounce:0")
-    parser.add_argument("--bounce-pct", type=float, default=10.0,
-                        help="Bounce entry: the open must be this %% above the crash-day close")
+    parser.add_argument("--bounce-level", type=str, default="10",
+                        help="Bounce entry level: 10 = 10%% above the crash close, r38 = 38%% of the fall won "
+                             "back, prev = the close before the crash day")
+    parser.add_argument("--bounce-fill", choices=BOUNCE_FILLS, default="open",
+                        help="Bounce entry: open = only on an open at or above the level; touch = a limit "
+                             "order resting at the level")
     parser.add_argument("--bounce-bars", type=int, default=5, help="Bounce entry: bars after the crash to wait")
     parser.add_argument("--skip-spike", type=int, default=0,
                         help="Leave out crashes on a stock with a spike-short setup in this many bars before (0 = keep)")
@@ -355,6 +407,11 @@ def main():
     entry, spec = args.pick.split(":")
     if entry not in ENTRIES:
         raise SystemExit(f"--pick entry must be one of {ENTRIES}, not {entry!r}")
+    try:
+        bounce_level(panel, np.array([], dtype=int), args.bounce_level)
+    except ValueError:
+        raise SystemExit(f"--bounce-level must be a % like 10, a share of the fall like r38, or prev, "
+                         f"not {args.bounce_level!r}")
     parse_stop(spec)
     specs = [s.strip() for s in args.stops.split(",")]
     combos = [(en, s) for en in ENTRIES for s in specs]
@@ -373,7 +430,8 @@ def main():
     print("=" * 100)
     print(f"CRASH-KEEPS-FALLING SHORT, REAL TRADES  hold={args.hold}  universe={args.universe}  start={args.start}  "
           f"end={args.end}  liq_top_pct={P['liq_top_pct']:g}  borrow {args.borrow_pct:g}%/yr  "
-          f"stop_slip={args.stop_slip:g}%  bounce {args.bounce_pct:g}% within {args.bounce_bars} bars  "
+          f"stop_slip={args.stop_slip:g}%  bounce level {args.bounce_level} fill {args.bounce_fill} within "
+          f"{args.bounce_bars} bars  "
           f"({time.time() - t0:.1f}s)")
     print("=" * 100)
     print(f"Rule: first {DAYS}-day fall of {FALL:g}%+ after a 60-day rise of {RUN_MIN:g}%+; short the close, the "
@@ -406,6 +464,18 @@ def main():
           f"(each + row keeps the ones above it), then all four with one left out (a filter that matters "
           f"loses the most when it's the one left out).")
     print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    if entry == "bounce":
+        rows = []
+        for lv in BOUNCE_LEVELS + ([args.bounce_level] if args.bounce_level not in BOUNCE_LEVELS else []):
+            for fl in BOUNCE_FILLS:
+                tr, _ = trade(panel, ev, entry, spec, args, level=lv, fill=fl)
+                rows.append({"level": lv, "fill": fl, **summarize(tr, years, args.hold, args.borrow_pct)})
+        print(f"\nBounce levels at the pick's stop ({spec}), shorted within {args.bounce_bars} bars of the crash. "
+              f"level: 10 = 10% above the crash close; r38 = 38% of the 3-day fall won back; prev = the close "
+              f"before the crash day. fill: open = only on an open at or above the level; touch = a limit order "
+              f"at the level (filled at the open if it opens above). Filters as the flags say.")
+        print(pd.DataFrame(rows).round(2).to_string(index=False))
 
     t = t.copy()
     t["block"] = ce.block_of(t["entry_date"])

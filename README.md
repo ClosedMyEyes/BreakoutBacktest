@@ -192,8 +192,7 @@ python crash_short/crash_short.py --start 2010-01-01 --sample 10
 ```
 
 `crash_short/crash_trades.py` trades the same rule through the short engine, as `spike_short.py` does:
-a grid of close / next-open / bounce entries (the first open within 5 bars that is 10%+ above the crash
-close) and stops of none / 25 / 40 / 60 / 100% intraday or 25 / 40 / 60% judged on the close (`25c`:
+a grid of close / next-open / bounce entries and stops of none / 25 / 40 / 60 / 100% intraday or 25 / 40 / 60% judged on the close (`25c`:
 cover the next open after a close 25%+ above the short). Slippage, commission, borrow and dividends are
 charged, with 100%/yr borrow as a stress. Four filters with a reason behind them are flags and are
 also stacked one by one, then left out one at a time, in a filter table: no spike-short setup in the
@@ -203,11 +202,19 @@ blocks, years, exit reasons, a squeeze table (including volume build-up before t
 from the 52-week low), and an account test (`--sizes`) that runs the crash short alone, the live spike
 short alone and both in one account. The holdout pass bar is printed at the end of every run.
 
+The bounce entry shorts a relief rally into a resistance level within 5 bars of the crash. The level is
+set with `--bounce-level`: a % above the crash close (`10`), a share of the 3-day fall won back (`r38`),
+or the close before the crash day (`prev`). `--bounce-fill` sets the fill: `open` shorts only an open at
+or above the level, and `touch` is a limit order resting at the level. With a bounce pick, a table
+compares levels 5 / 10 / 15 / 20 / r25 / r38 / r50 / prev with both fills, and the squeeze table adds the
+short price vs the crash close and the number of bars after the crash.
+
 ```
 python crash_short/crash_trades.py --start 2010-01-01
 python crash_short/crash_trades.py --start 2010-01-01 --pick next_open:40c --sample 10
 python crash_short/crash_trades.py --start 2010-01-01 --skip-spike 20 --min-vol-x 2 --market above200 --need-200d
-python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25 --sizes 2.5,5,10
+python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25c --sizes 2.5,5,10
+python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25c --bounce-level r38 --bounce-fill touch
 ```
 
 ## Setup (Windows machine with Norgate)
