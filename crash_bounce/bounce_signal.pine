@@ -1,0 +1,62 @@
+//@version=6
+// Bounce-short signal: the frozen rule from crash_bounce/bounce_short.py (prev:touch:1:0, hold 10)
+// and crash_bounce/bounce_scan.py, for a daily chart.
+// Crash day: the close is 30%+ below the close 3 bars before, the first such day in 10 bars, after a
+// 60-day rise of 20%+ before the fall (the close 3 bars back over the close 63 bars back), with a $5+
+// close and the 50-day average dollar volume over the backtest's floor.
+// Entry: the next day only, a short limit order at the close the day before the crash day. It fills
+// at the open if the stock opens above it, else at the limit if the day's high reaches it.
+// No stop; cover at the close of the 10th bar after the entry.
+// Not checked here: Norgate's bad-data bars and the backtest's no-price-break-in-a-year rule.
+indicator("BounceShort", shorttitle = "BounceShort", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+fallPct  = input.float(30.0, "Fall %: close below the close 3 bars before", minval = 0)
+risePct  = input.float(20.0, "Rise %: the 60 days before the fall", minval = 0)
+minPx    = input.float(5.0, "Lowest crash-day close ($)", minval = 0)
+holdBars = input.int(10, "Cover at the close of this many bars after the entry", minval = 1)
+minDv    = input.float(250000, "Lowest 50-day average dollar volume ($): the floor spike_scan.py prints", minval = 0)
+DAYS = 3
+GAP = 10
+RISE_BARS = 60
+
+// The 3-day fall; only the first day it reaches fallPct in 10 bars counts
+fall3 = (close / close[DAYS] - 1) * 100
+hit = not na(fall3) and fall3 <= -fallPct
+hits = math.sum(hit ? 1 : 0, GAP)
+hitBefore = nz(hits[1]) > 0
+
+// The rise before the fall: the close the fall started from over the close 60 bars before it
+rise60 = (close[DAYS] / close[DAYS + RISE_BARS] - 1) * 100
+
+// 50-day average dollar volume, which needs 50 bars of history as in the backtest
+dv50 = ta.sma(close * volume, 50)
+liquid = not na(dv50) and dv50 >= minDv
+
+crash = hit and not hitBefore and not na(rise60) and rise60 >= risePct and close >= minPx and liquid
+limitPx = close[1]                                   // on a crash day: the close the day before it
+
+// The day after a crash: filled if the high reaches the limit, at the open if it opened above it
+entry = crash[1] and high >= limitPx[1]
+fillPx = open >= limitPx[1] ? open : limitPx[1]
+cover = ta.barssince(entry) == holdBars
+
+plotshape(crash, "Crash day", shape.triangleup, location.belowbar, color.purple, size = size.tiny)
+plotshape(entry, "Short entry", shape.labeldown, location.abovebar, color.red, text = "S", textcolor = color.white, size = size.tiny)
+plotshape(cover, "Cover", shape.xcross, location.abovebar, color.gray, size = size.tiny)
+if crash
+    line.new(bar_index, limitPx, bar_index + 1, limitPx, color = color.purple, style = line.style_dotted)
+if entry
+    line.new(bar_index, fillPx, bar_index + holdBars, fillPx, color = color.red, style = line.style_dashed)
+
+var label note = na
+if barstate.islast
+    label.delete(note)
+    note := crash ? label.new(bar_index, high, "Short limit " + str.tostring(limitPx, format.mintick) + " next session only\nFell " + str.tostring(-fall3, "#") + "% in 3 days", style = label.style_label_down, color = color.purple, textcolor = color.white) : na
+
+// Columns for the Pine Screener (hidden on the chart)
+plot(crash ? 1 : 0, "Order (1 = short limit next session)", display = display.data_window)
+plot(limitPx, "Short limit", display = display.data_window)
+plot(fall3, "3-day fall %", display = display.data_window)
+plot(rise60, "60-day rise %", display = display.data_window)
+plot(dv50, "50-day avg $ volume", display = display.data_window)
+alertcondition(crash, "Bounce order", "{{ticker}} crashed: short limit at the close before today, next session only")

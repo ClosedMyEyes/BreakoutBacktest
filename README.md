@@ -262,6 +262,18 @@ python crash_bounce/account_report.py --start 2010-01-01
 python crash_bounce/account_report.py --start 2010-01-01 --universe all --unlock-holdout --sizes 5,10
 ```
 
+`crash_bounce/bounce_scan.py` is the nightly scanner for it: each stock that crashed today with the limit
+price to short at in the next session, and the shorts entered in the last 15 trading days with the days
+left to the cover. It keeps `bounce_signals.csv` in the work folder as the forward-test record.
+`crash_bounce/bounce_signal.pine` is the same rule as a TradingView indicator. `crash_bounce/TRADING.md`
+has the evening and next-session steps, how to add the indicator, and a TradingView screen for when the
+Norgate data isn't current.
+
+```
+python crash_bounce/bounce_scan.py
+python crash_bounce/bounce_scan.py --asof 2026-08-07     # what it would have said that evening (not saved)
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
@@ -316,7 +328,7 @@ and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out
 | `setup_short.py` | Short side Mode B: one setup vs S0 |
 | `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
 | `crash_short/` | Short crashes that follow a run-up: the event study, then real trades with stops |
-| `crash_bounce/` | Short the relief rally after a crash, at a line known at the crash close |
+| `crash_bounce/` | Short the relief rally after a crash, at a line known at the crash close; its nightly scanner and TradingView indicator |
 | `crash_rebound/` | Crash rebound: returns after a big 1 or 3-day fall |
 | `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
 | `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |

@@ -93,6 +93,8 @@ HOLDS = "5,10,20"
 TOUCH_MARGINS = [0.5, 1.0, 2.0]   # the fill check: % the high must clear the line by
 TARGETS = "0,0.5,0.9,1,1.5"   # multiples of the distance from the short price to the crash low; 0 = none
 PICK = "r38:touch:5:0"
+FROZEN = "prev:touch:1:0"   # the live rule, frozen 2026-10-13 after the holdout passed (with hold 10)
+FROZEN_HOLD = 10
 PRE = "pre"
 PASS_BAR = ("Holdout pass bar for the bounce short, set before the holdout is run: the pick's ret above +5% a "
             "trade at 5%/yr borrow, t above 1.5, and positive in at least 2 of the 2010-14 / 2015-19 / 2020-24 "
