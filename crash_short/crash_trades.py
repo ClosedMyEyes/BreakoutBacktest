@@ -180,26 +180,37 @@ def close_stop_at(panel, t, lines, p, reason):
     if t.empty:
         return t
     t = t.copy()
-    c, o = panel.c, panel.o
-    unadj, div = panel.col("unadj_close"), panel.col("div")
-    slip, comm = p["slippage_pct"] / 100.0, p["commission"]
+    c = panel.c
     t["stop"] = np.asarray(lines, np.float64) * (t["entry"] / t["entry_raw"]).to_numpy()  # in proceeds terms
-    for i, e, x, at_close, proceeds, raw, line in zip(t.index, t["entry_row"], t["exit_row"], t["at_close"],
-                                                      t["entry"], t["entry_raw"], lines):
+    idx, ks = [], []
+    for i, e, x, at_close, line in zip(t.index, t["entry_row"], t["exit_row"], t["at_close"], lines):
         first = e + 1 if at_close else e
         hit = np.flatnonzero(c[first:x] >= line)
-        if not len(hit):
-            continue
-        k = first + hit[0] + 1                          # cover at the next bar's open
-        px = o[k] * (1 + slip) + (comm * c[k] / unadj[k] if unadj[k] > 0 else comm)
-        div_paid = float(np.nansum(div[e + 1:k + 1]))
-        days = (panel.date[k] - panel.date[e]) / np.timedelta64(1, "D")
+        if len(hit):
+            idx.append(i)
+            ks.append(first + hit[0] + 1)               # cover at the next bar's open
+    ks = np.asarray(ks, dtype=int)
+    return cover(panel, t, idx, ks, panel.o[ks], p, reason)
+
+
+def cover(panel, t, idx, ks, prices, p, reason):
+    """Re-exit trades idx (index labels of t, changed in place): buy to cover on bars
+    ks at prices (before costs). Costs as in engine_short.simulate_short."""
+    if len(idx):
+        e = t.loc[idx, "entry_row"].to_numpy()
+        proceeds, raw = t.loc[idx, "entry"].to_numpy(), t.loc[idx, "entry_raw"].to_numpy()
+        unadj = panel.col("unadj_close")[ks]
+        comm = p["commission"] * np.where(unadj > 0, panel.c[ks] / np.where(unadj > 0, unadj, 1.0), 1.0)
+        px = np.asarray(prices, np.float64) * (1 + p["slippage_pct"] / 100.0) + comm
+        div = np.concatenate([[0.0], np.cumsum(np.nan_to_num(panel.col("div")))])
+        div_paid = div[ks + 1] - div[e + 1]                # dividends on bars e+1 .. k
+        days = (panel.date[ks] - panel.date[e]) / np.timedelta64(1, "D")
         borrow = raw * p["borrow_pct"] / 100.0 * days / 365.0
         pnl = proceeds - px - div_paid - borrow
-        t.loc[i, ["exit_row", "exit", "div_paid", "borrow_paid", "ret_pct", "bars_held"]] = \
-            [k, px, div_paid, borrow, pnl / proceeds * 100, k - e]
-        t.loc[i, "exit_reason"] = reason
-        t.loc[i, "exit_date"] = panel.date[k]
+        t.loc[idx, ["exit_row", "exit", "div_paid", "borrow_paid", "ret_pct", "bars_held"]] = \
+            np.column_stack([ks, px, div_paid, borrow, pnl / proceeds * 100, ks - e])
+        t.loc[idx, "exit_reason"] = reason
+        t.loc[idx, "exit_date"] = panel.date[ks]
     t["exit_row"] = t["exit_row"].astype(int)
     t["result_R"] = (t["entry"] - t["exit"] - t["div_paid"] - t["borrow_paid"]) / (t["stop"] - t["entry"])
     return t

@@ -1,5 +1,5 @@
-"""Crash bounce short: the pick spec, the window, and the stop at the close the fall
-started from."""
+"""Crash bounce short: the pick spec, the window, the stop at the close the fall
+started from, and the cover target below the short."""
 
 import os
 import sys
@@ -17,14 +17,15 @@ import engine_short  # noqa: E402
 import bounce_short as bs  # noqa: E402
 
 
-def panel_from_closes(closes, opens=None, highs=None):
+def panel_from_closes(closes, opens=None, highs=None, lows=None):
     c = np.asarray(closes, float)
     o = c if opens is None else np.asarray(opens, float)
     h = np.maximum(c, o) if highs is None else np.asarray(highs, float)
+    lo = np.minimum(c, o) if lows is None else np.asarray(lows, float)
     n = len(c)
     z = np.zeros(n)
     df = pd.DataFrame({"symbol": "AAA", "date": pd.bdate_range("2020-01-01", periods=n),
-                       "open": o, "high": h, "low": np.minimum(c, o), "close": c,
+                       "open": o, "high": h, "low": lo, "close": c,
                        "volume": 1e6, "sma200": np.nan, "in_sp500": z, "in_sp400": z, "in_sp600": z,
                        "bad_bar": z, "bad_bar_dn": z, "div": z, "unadj_close": c, "dv_pct": 50.0})
     return engine.Panel(df, set())
@@ -87,3 +88,53 @@ def test_pre_stop_ignores_a_close_short_of_that_line():
     assert t["exit_reason"][0] == "time exit" and t["exit_row"][0] == 83
     t, _ = bs.bounce_trades(p, events(p), "r38", "touch", 5, "20c", 10, ARGS)
     assert t["exit_reason"][0] == "stopped (close)" and t["exit_row"][0] == 77
+
+
+def target_case(open76):
+    """Shorted at r38 (11.21) on bar 73, the day after the crash; the crash low is 9.5
+    (bar 72), so a 0.5x target is 11.21 - 0.5 * 1.71 = 10.355. Bar 73's own low is
+    9.0, but it may come before the fill, so it doesn't count. Bar 76 trades down
+    to 10.0."""
+    closes = list(CRASH)
+    closes[73:77] = [11.0, 11.0, 11.0, 10.5]
+    opens = list(closes)
+    opens[76] = open76
+    highs = list(np.maximum(closes, opens))
+    highs[73] = 11.5
+    lows = list(np.minimum(closes, opens))
+    lows[73], lows[76] = 9.0, 10.0
+    return panel_from_closes(closes, opens, highs, lows)
+
+
+SHORT = 9.5 + 0.38 * 4.5
+LINE = SHORT - 0.5 * (SHORT - 9.5)
+
+
+def test_crash_low_is_the_lowest_low_of_the_crash_days():
+    lows = list(CRASH)
+    lows[71] = 9.1
+    assert bs.crash_low(panel_from_closes(CRASH, lows=lows), np.array([72]))[0] == pytest.approx(9.1)
+    assert bs.crash_low(panel_from_closes(CRASH), np.array([72]))[0] == pytest.approx(9.5)
+
+
+def test_target_covers_at_the_line_from_the_day_after_the_entry():
+    p = target_case(open76=10.8)
+    t, _ = bs.bounce_trades(p, events(p), "r38", "touch", 5, "0", 10, ARGS, target=0.5)
+    assert list(t["entry_row"]) == [73] and t["exit_reason"][0] == "target" and t["exit_row"][0] == 76
+    assert t["ret_pct"][0] == pytest.approx((SHORT - LINE) / SHORT * 100)
+
+
+def test_target_fills_at_the_open_on_a_gap_below_it():
+    p = target_case(open76=10.0)
+    t, _ = bs.bounce_trades(p, events(p), "r38", "touch", 5, "0", 10, ARGS, target=0.5)
+    assert t["exit_row"][0] == 76 and t["ret_pct"][0] == pytest.approx((SHORT - 10.0) / SHORT * 100)
+
+
+def test_target_counts_on_the_time_exits_last_day_only():
+    p = target_case(open76=10.8)
+    t, _ = bs.bounce_trades(p, events(p), "r38", "touch", 5, "0", 3, ARGS, target=0.5)
+    assert t["exit_reason"][0] == "target" and t["exit_row"][0] == 76
+    t, _ = bs.bounce_trades(p, events(p), "r38", "touch", 5, "0", 2, ARGS, target=0.5)
+    assert t["exit_reason"][0] == "time exit" and t["exit_row"][0] == 75
+    t, _ = bs.bounce_trades(p, events(p), "r38", "touch", 5, "0", 10, ARGS, target=1.5)
+    assert t["exit_reason"][0] == "time exit"           # 1.5x is 8.65; it bottoms at 9.0 after the entry

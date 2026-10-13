@@ -29,10 +29,21 @@ The exit: a stop, else cover at the close --hold bars after the entry.
   25c     cover at the next open after a close 25%+ above the short price
   pre     cover at the next open after a close at or above the close the 3-day
           fall started from (the crash fully undone)
+A target (--target) covers early with a buy limit order below the short, as a
+multiple of the distance from the short price down to the crash low (the lowest
+low of the 3 crash days, known at the crash close):
+  0.5     half way down to the crash low
+  1       at the crash low
+  1.5     half that distance again below the crash low
+  0       none
+It is checked from the day after the entry: filled at the open if it opens at or
+below the line, else at the line if the day's low reaches it. On the day a stop
+covers, the stop is assumed to come first.
 
-Tables, for --pick LEVEL:FILL:WINDOW:STOP and --hold:
-  every level x fill x window (--windows) at the pick's stop and hold
-  the pick's entry with each stop (--stops), then with each hold (--holds)
+Tables, for --pick LEVEL:FILL:WINDOW:STOP, --target and --hold:
+  every level x fill x window (--windows) at the pick's stop, target and hold
+  the pick's entry with each stop (--stops)
+  the pick's entry with each target (--targets) x each hold (--holds)
   the filter table (as in crash_trades.py; the filter flags are off by default)
   the pick by block and year, exit reasons, spike-short overlap, and what separates
   the winners from the squeezes
@@ -48,10 +59,11 @@ HOW TO RUN:
   python crash_bounce/bounce_short.py --start 2010-01-01
   python crash_bounce/bounce_short.py --start 2010-01-01 --pick r38:touch:2:0 --sizes 2.5,5,10
   python crash_bounce/bounce_short.py --start 2010-01-01 --pick prev:touch:5:pre --sample 10
+  python crash_bounce/bounce_short.py --start 2010-01-01 --target 0.9 --hold 20 --sizes 5
   python crash_bounce/bounce_short.py --start 2010-01-01 --skip-spike 20
 
 The holdout is run once, after the pick, the hold and any filters are chosen on Dev:
-  python crash_bounce/bounce_short.py --start 2010-01-01 --pick LEVEL:FILL:WINDOW:STOP --hold N [filters] --universe holdout --unlock-holdout
+  python crash_bounce/bounce_short.py --start 2010-01-01 --pick LEVEL:FILL:WINDOW:STOP --target X --hold N [filters] --universe holdout --unlock-holdout
 The pass bar is printed at the end of every run, so it is fixed before that run.
 """
 
@@ -78,6 +90,7 @@ FILLS = ct.BOUNCE_FILLS
 WINDOWS = "1,2,5"
 STOPS = "0,25,40,60,100,25c,40c,60c,pre"
 HOLDS = "5,10,20"
+TARGETS = "0,0.5,0.9,1,1.5"   # multiples of the distance from the short price to the crash low; 0 = none
 PICK = "r38:touch:5:0"
 PRE = "pre"
 PASS_BAR = ("Holdout pass bar for the bounce short, set before the holdout is run: the pick's ret above +5% a "
@@ -115,18 +128,51 @@ def has_stop(stop):
     return stop == PRE or ct.parse_stop(stop)[0] > 0
 
 
-def bounce_trades(panel, ev, level, fill, bars, stop, hold, args):
-    """The bounce short's trades for one level, fill, window, stop and hold."""
+def crash_low(panel, sig, days=ct.DAYS):
+    """The lowest low of the crash days (the wick), known at the crash close."""
+    return np.min([panel.l[sig - k] for k in range(days)], axis=0)
+
+
+def take_profit(panel, t, lines, p):
+    """Re-exit trades with a buy limit order at each trade's line, from the bar after
+    the entry: filled at the open if it opens at or below the line, else at the line
+    if the day's low reaches it. A time exit's last bar is checked; on a stop's last
+    bar the stop comes first."""
+    if t.empty:
+        return t
+    t = t.copy()
+    idx, ks, prices = [], [], []
+    for i, e, x, reason, line in zip(t.index, t["entry_row"], t["exit_row"], t["exit_reason"], lines):
+        last = x if reason == "time exit" else x - 1
+        hit = np.flatnonzero(panel.l[e + 1:last + 1] <= line)
+        if len(hit):
+            k = e + 1 + hit[0]
+            idx.append(i)
+            ks.append(k)
+            prices.append(min(panel.o[k], line))
+    return ct.cover(panel, t, idx, np.asarray(ks, dtype=int), prices, p, "target")
+
+
+def bounce_trades(panel, ev, level, fill, bars, stop, hold, args, target=0.0):
+    """The bounce short's trades for one level, fill, window, stop, hold and target."""
     cand = ct.crash_candidates(panel, ev, "bounce", level, fill, bars)
     family = f"{level}:{fill}:{bars}:{stop}"
-    if stop != PRE:
-        return ct.run_trades(panel, cand, stop, hold, args, family), cand
     p = ss.exit_params(0, hold, args.borrow_pct, args.slippage_pct)
-    t = ct.add_entry_raw(engine_short.run_signals(panel, cand, p, args.start, args.end, family=family), cand)
-    if t.empty:
-        return t, cand
-    lines = panel.c[t["signal_row"].to_numpy() - ct.DAYS]       # the close the fall started from
-    return ct.close_stop_at(panel, t, lines, p, "stopped (crash undone)"), cand
+    if stop != PRE:
+        t = ct.run_trades(panel, cand, stop, hold, args, family)
+    else:
+        t = ct.add_entry_raw(engine_short.run_signals(panel, cand, p, args.start, args.end, family=family), cand)
+        if not t.empty:
+            lines = panel.c[t["signal_row"].to_numpy() - ct.DAYS]   # the close the fall started from
+            t = ct.close_stop_at(panel, t, lines, p, "stopped (crash undone)")
+    if target > 0 and not t.empty:
+        raw = t["entry_raw"].to_numpy()
+        t = take_profit(panel, t, raw - target * (raw - crash_low(panel, t["signal_row"].to_numpy())), p)
+    return t, cand
+
+
+def target_name(x):
+    return "none" if x == 0 else f"{x:g}x"
 
 
 def main():
@@ -141,6 +187,10 @@ def main():
                         help="Stops to test on the pick: %% above the short price; 25c = judged on the close; "
                              "pre = a close back at the close the fall started from; 0 = none")
     parser.add_argument("--holds", type=str, default=HOLDS, help="Holds to test on the pick, in bars")
+    parser.add_argument("--target", type=float, default=0.0,
+                        help="Cover target for the pick, a multiple of the distance from the short price to the "
+                             "crash low: 0.5 = half way, 1 = the crash low, 1.5 = beyond it; 0 = none")
+    parser.add_argument("--targets", type=str, default=TARGETS, help="Targets to test on the pick")
     args = parser.parse_args()
     P = collect(args, ["universe"])
     t0 = time.time()
@@ -149,18 +199,24 @@ def main():
         stops = [check_stop(s.strip()) for s in args.stops.split(",")]
         windows = sorted({int(w) for w in args.windows.split(",")} | {bars})
         holds = sorted({int(h) for h in args.holds.split(",")} | {args.hold})
+        targets = sorted({float(x) for x in args.targets.split(",")} | {args.target})
     except ValueError:
         raise SystemExit(f"--pick is LEVEL:FILL:WINDOW:STOP, e.g. r38:touch:5:0: level a % like 10, a share of "
                          f"the fall like r38, or prev; fill {' or '.join(FILLS)}; window 1 or more bars; stop "
                          f"0, 25, 25c or pre (--stops, --windows and --holds take the same values, comma "
-                         f"separated). Got --pick {args.pick}.")
+                         f"separated; --targets like 0,0.5,1). Got --pick {args.pick}.")
     stops += [stop] if stop not in stops else []
 
     D = ct.load_crashes(args, P)
     panel, ev, years = D.panel, D.ev, D.years
 
-    def run(lv=level, fl=fill, br=bars, st=stop, hold=args.hold, events=None):
-        return bounce_trades(panel, ev if events is None else events, lv, fl, br, st, hold, args)
+    def run(lv=level, fl=fill, br=bars, st=stop, hold=args.hold, target=args.target, events=None):
+        return bounce_trades(panel, ev if events is None else events, lv, fl, br, st, hold, args, target)
+
+    def exits(t):
+        if t.empty:
+            return {}
+        return {"target_hit_%": (t["exit_reason"] == "target").mean() * 100, "avg_bars": t["bars_held"].mean()}
 
     def summ(t, hold=args.hold):
         return ct.summarize(t, years, hold, args.borrow_pct)
@@ -169,52 +225,64 @@ def main():
     grid = pd.DataFrame([{"level": lv, "fill": fl, "window": br, **summ(run(lv, fl, br)[0])}
                          for lv in levels for fl in FILLS for br in windows])
     by_stop = pd.DataFrame([{"stop": "none" if s == "0" else s, **summ(run(st=s)[0])} for s in stops])
-    by_hold = pd.DataFrame([{"hold": h, **summ(run(hold=h)[0], h)} for h in holds])
+    by_exit = []
+    for h in holds:
+        for x in targets:
+            tr = run(hold=h, target=x)[0]
+            by_exit.append({"hold": h, "target": target_name(x), **summ(tr, h), **exits(tr)})
+    by_exit = pd.DataFrame(by_exit)
+    pick = args.pick + (f" target {target_name(args.target)}" if args.target else "")
     t, cand = run()
 
     pd.set_option("display.width", 250)
     print("=" * 100)
-    print(f"CRASH BOUNCE SHORT  pick={args.pick}  hold={args.hold}  universe={args.universe}  start={args.start}  "
+    print(f"CRASH BOUNCE SHORT  pick={args.pick}  target={target_name(args.target)}  hold={args.hold}  "
+          f"universe={args.universe}  start={args.start}  "
           f"end={args.end}  liq_top_pct={P['liq_top_pct']:g}  borrow {args.borrow_pct:g}%/yr  "
           f"stop_slip={args.stop_slip:g}%  ({time.time() - t0:.1f}s)")
     print("=" * 100)
     print(f"Rule: first {ct.DAYS}-day fall of {ct.FALL:g}%+ after a 60-day rise of {ct.RUN_MIN:g}%+; short the "
-          f"relief rally into a line known at the crash close, within the window; cover at the stop or after "
-          f"the hold. Filters on: {'; '.join(D.on) if D.on else 'none'}.")
+          f"relief rally into a line known at the crash close, within the window; cover at the stop, the "
+          f"target or after the hold. Filters on: {'; '.join(D.on) if D.on else 'none'}.")
     print("level: 10 / 20 = that % above the crash close; r38 = 38% of the 3-day fall won back; prev = the close "
           "before the crash day. fill: open = only on an open at or above the line; touch = a limit order at the "
           "line (filled at the open if it opens above). window = bars after the crash the line has to be reached "
           "in. ret = % a trade after slippage, commission, borrow and dividends; ret_b100 at 100%/yr borrow; "
           "worst_5% = the 1-in-20 loss; sum / max_dd in position sizes; t = t-stat with trades grouped by entry "
           "month.")
-    print(f"\nEvery level, fill and window, stop {'none' if stop == '0' else stop}, hold {args.hold}:")
+    print(f"\nEvery level, fill and window, stop {'none' if stop == '0' else stop}, target "
+          f"{target_name(args.target)}, hold {args.hold}:")
     print(grid.round(2).to_string(index=False))
-    print(f"\nStops on {level}:{fill}:{bars}, hold {args.hold}. 25 = intraday 25% above the short; 25c = cover the "
-          f"next open after a close 25%+ above it; pre = cover the next open after a close back at or above the "
-          f"close the 3-day fall started from.")
+    print(f"\nStops on {level}:{fill}:{bars}, target {target_name(args.target)}, hold {args.hold}. 25 = intraday "
+          f"25% above the short; 25c = cover the next open after a close 25%+ above it; pre = cover the next open "
+          f"after a close back at or above the close the 3-day fall started from.")
     print(by_stop.round(2).to_string(index=False))
-    print(f"\nHolds on {level}:{fill}:{bars}, stop {'none' if stop == '0' else stop} (bars after the entry):")
-    print(by_hold.round(2).to_string(index=False))
+    print(f"\nTargets x holds on {level}:{fill}:{bars}, stop {'none' if stop == '0' else stop}. target = a buy "
+          f"limit below the short at that multiple of the distance from the short price to the crash low (the "
+          f"lowest low of the 3 crash days): 0.5x half way, 1x the crash low, 1.5x beyond it. hold = bars after "
+          f"the entry to cover at the close if the target isn't hit (target none = the plain time exit). "
+          f"target_hit_% = share covered at the target; avg_bars = bars held.")
+    print(by_exit.round(2).to_string(index=False))
 
     if t.empty:
-        print(f"\nNo trades for the pick {args.pick}")
+        print(f"\nNo trades for the pick {pick}")
         return
 
-    print(f"\nFilters on the pick {args.pick}, starting from the rule with none of the filter flags (a --market "
+    print(f"\nFilters on the pick {pick}, starting from the rule with none of the filter flags (a --market "
           f"filter is already in), stacked one by one (each + row keeps the ones above it), then all four with "
           f"one left out (a filter that matters loses the most when it's the one left out).")
     print(ct.filter_rows(D, lambda g: run(events=g)[0], years, args).round(2).to_string(index=False))
 
-    ct.detail_tables(D, t, cand, args, args.pick, has_stop(stop))
+    ct.detail_tables(D, t, cand, args, pick, has_stop(stop))
     if args.sizes:
-        ct.account_test(D, t, args, "bounce short", f"the bounce short ({args.pick}, hold {args.hold})")
+        ct.account_test(D, t, args, "bounce short", f"the bounce short ({pick}, hold {args.hold})")
 
     print(f"\n{PASS_BAR}")
 
     if not args.no_log:
-        runs = len(grid) + len(by_stop) + len(by_hold) + 1
+        runs = len(grid) + len(by_stop) + len(by_exit) + 1
         research_log.append(
-            question=f"Crash bounce short, pick {args.pick} hold {args.hold}, filters: {'; '.join(D.on) or 'none'}",
+            question=f"Crash bounce short, pick {pick} hold {args.hold}, filters: {'; '.join(D.on) or 'none'}",
             phase="crash_bounce", split=args.universe, script="crash_bounce/bounce_short.py",
             params={**vars(args), **P}, combinations=runs, runs=runs,
             results={"pick": summ(t)})

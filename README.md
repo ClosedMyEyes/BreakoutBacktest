@@ -230,8 +230,14 @@ relief rally into a line known at the crash close. `--pick LEVEL:FILL:WINDOW:STO
 - stop: `0` (none), `25` (intraday), `25c` (judged on the close), or `pre` (cover the next open after a
   close back at or above the close the 3-day fall started from)
 
+`--target` adds a buy limit below the short, as a multiple of the distance from the short price down to
+the crash low (the lowest low of the 3 crash days): `0.5` is half way, `1` is the crash low, `1.5` is half
+that distance again below it. If it isn't hit, the trade is covered at the close `--hold` bars after the
+entry.
+
 It prints every level x fill x window (`--windows 1,2,5`) at the pick's stop, the pick with each stop
-(`--stops`) and each hold (`--holds 5,10,20`), the filter table, then the pick by block and year, exit
+(`--stops`), each target (`--targets 0,0.5,0.9,1,1.5`) with each hold (`--holds 5,10,20`), the filter
+table, then the pick by block and year, exit
 reasons, the squeeze table and, with `--sizes`, the account test with the live spike short. It shares the
 filter flags and the cost settings with `crash_trades.py`. The holdout pass bar is printed at the end of
 every run.
@@ -240,6 +246,7 @@ every run.
 python crash_bounce/bounce_short.py --start 2010-01-01
 python crash_bounce/bounce_short.py --start 2010-01-01 --pick r38:touch:2:0 --sizes 2.5,5,10
 python crash_bounce/bounce_short.py --start 2010-01-01 --pick prev:touch:5:pre --sample 10
+python crash_bounce/bounce_short.py --start 2010-01-01 --target 0.9 --hold 20 --sizes 5
 python crash_bounce/bounce_short.py --start 2010-01-01 --skip-spike 20
 ```
 
