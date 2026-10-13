@@ -4,7 +4,7 @@ The frozen rule (`prev:touch:1:0`, hold 10, no stop; holdout passed 2026-10-13):
 
 - **Crash day:** a stock closes 30%+ below its close 3 days earlier, the first such day in 10, after a 60-day rise of 20%+ before the fall. It needs a $5+ close and a place in the top 80% of stocks by dollar volume.
 - **Entry, the next session only:** a limit order to short at the close the day before the crash day. If the stock opens above it, it fills at the open. If the high only reaches it, it fills at the limit. If it never gets there, there's no trade.
-- **Exit:** no stop. Cover at the close of the 10th trading day after the fill.
+- **Exit:** no stop. Cover at the market close on the 10th trading day after the fill, counting the day you short as day 0.
 
 ## Each evening
 
@@ -50,9 +50,10 @@ Check it on trades the backtest took. Each chart should show a triangle on the c
 
 - SEDG: crash 2026-08-07, short 2026-08-10 at 32.67, cover 2026-08-24
 - VPG: crash 2026-08-07, short 2026-08-10 at 69.69, cover 2026-08-24
-- HOST: crash 2026-09-21, short 2026-09-22 at 8.18, cover 2026-10-06
 
-If one is missing or the editor shows an error, send a screenshot. The indicator's logic was checked against the backtest in Python, but there was no Pine compiler to test the script itself.
+A stock with fewer than 63 bars on TradingView can't show a crash, because the 60-day rise needs them. HOST is one: the backtest shorted it on 2026-09-22, but TradingView's chart starts only a few days before its crash. The Norgate data has older history for it, so the nightly scan still catches cases like this.
+
+If SEDG or VPG is missing its marks, send a screenshot. The indicator's logic was checked against the backtest in Python, and the script loads on TradingView.
 
 ## Without the Norgate data
 
