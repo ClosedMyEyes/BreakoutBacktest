@@ -192,17 +192,22 @@ python crash_short/crash_short.py --start 2010-01-01 --sample 10
 ```
 
 `crash_short/crash_trades.py` trades the same rule through the short engine, as `spike_short.py` does:
-a grid of close / next-open entries and stops of none / 15 / 25 / 40%, with slippage, commission, borrow
-and dividends charged (and 100%/yr borrow as a stress). It adds 5-year blocks, years, exit reasons, a
-squeeze table, and an account test (`--sizes`) that runs the crash short alone, the live spike short
-alone and both in one account. Each trade is marked if the live spike rule had a setup on the same
-stock in the 20 bars up to the crash or in the year before (`--skip-spike N` leaves those out). The
-holdout pass bar is printed at the end of every run.
+a grid of close / next-open / bounce entries (the first open within 5 bars that is 10%+ above the crash
+close) and stops of none / 25 / 40 / 60 / 100% intraday or 25 / 40 / 60% judged on the close (`25c`:
+cover the next open after a close 25%+ above the short). Slippage, commission, borrow and dividends are
+charged, with 100%/yr borrow as a stress. Four filters with a reason behind them are flags and are
+also stacked one by one, then left out one at a time, in a filter table: no spike-short setup in the
+20 bars before (`--skip-spike 20`), crash-day volume 2x+ usual (`--min-vol-x 2`), the S&P above its
+200-day (`--market above200`), and 200 days of history before the fall (`--need-200d`). It adds 5-year
+blocks, years, exit reasons, a squeeze table (including volume build-up before the fall and distance
+from the 52-week low), and an account test (`--sizes`) that runs the crash short alone, the live spike
+short alone and both in one account. The holdout pass bar is printed at the end of every run.
 
 ```
 python crash_short/crash_trades.py --start 2010-01-01
-python crash_short/crash_trades.py --start 2010-01-01 --pick close:25 --sample 10
-python crash_short/crash_trades.py --start 2010-01-01 --sizes 2.5,5,10
+python crash_short/crash_trades.py --start 2010-01-01 --pick next_open:40c --sample 10
+python crash_short/crash_trades.py --start 2010-01-01 --skip-spike 20 --min-vol-x 2 --market above200 --need-200d
+python crash_short/crash_trades.py --start 2010-01-01 --pick bounce:25 --sizes 2.5,5,10
 ```
 
 ## Setup (Windows machine with Norgate)

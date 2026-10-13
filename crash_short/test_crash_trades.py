@@ -118,3 +118,52 @@ def test_spike_setups_flag_the_live_rules_gap_entry():
     opens[15] = 21.3                                       # only 1.4% above: under the 2% gap
     flag, _ = ct.spike_setups(panel_from_closes(closes, opens), np.ones(len(closes), dtype=bool))
     assert not flag.any()
+
+
+NO_COST = {"slippage_pct": 0.0, "commission": 0.0}
+
+
+def test_close_stop_covers_the_next_open_after_a_close_through_it():
+    closes, opens = list(CRASH), list(OPENS)
+    closes[76] = 11.6                                    # 26% above the 9.2 short at the next open
+    opens[77] = 11.0
+    p = panel_from_closes(closes, opens)
+    ev = ct.crash_events(p, np.ones(len(closes), dtype=bool))
+    xp = {**ss.exit_params(0, 10, 0.0), **NO_COST}
+    t = engine_short.run_signals(p, ct.crash_candidates(p, ev, "next_open"), xp)
+    t = ct.close_stop(p, t, 25, xp)
+    assert t["exit_reason"][0] == "stopped (close)" and t["exit_row"][0] == 77
+    assert t["ret_pct"][0] == pytest.approx((9.2 - 11.0) / 9.2 * 100)
+    assert t["exit_date"][0] == p.date[77]
+
+
+def test_close_stop_ignores_an_intraday_squeeze_that_fades():
+    highs = list(np.maximum(CRASH, OPENS))
+    highs[76] = 12.5                                     # 36% above the short intraday, closes back at 9
+    p = panel_from_closes(CRASH, OPENS, highs)
+    ev = ct.crash_events(p, np.ones(len(CRASH), dtype=bool))
+    xp = {**ss.exit_params(0, 10, 0.0), **NO_COST}
+    t = ct.close_stop(p, engine_short.run_signals(p, ct.crash_candidates(p, ev, "next_open"), xp), 25, xp)
+    assert t["exit_reason"][0] == "time exit" and t["exit_row"][0] == 83
+
+
+def test_bounce_entry_is_the_first_open_far_enough_above_the_crash_close():
+    opens = list(OPENS)
+    opens[74], opens[75] = 10.6, 11.0                    # 11.6% then 15.8% above the 9.5 crash close
+    p = panel_from_closes(CRASH, opens)
+    ev = ct.crash_events(p, np.ones(len(CRASH), dtype=bool))
+    c = ct.crash_candidates(p, ev, "bounce", bounce_pct=10, bounce_bars=5)
+    assert list(c["signal_row"]) == [72] and list(c["entry_row"]) == [74]
+    assert c["entry_raw"][0] == pytest.approx(10.6) and not c["at_close"][0]
+    assert len(ct.crash_candidates(p, ev, "bounce", bounce_pct=20, bounce_bars=5)["entry_row"]) == 0
+    assert len(ct.crash_candidates(p, ev, "bounce", bounce_pct=10, bounce_bars=1)["entry_row"]) == 0
+
+
+def test_parse_stop_and_window_mean():
+    assert ct.parse_stop("25") == (25.0, False) and ct.parse_stop("40c") == (40.0, True)
+    assert ct.parse_stop("0") == (0.0, False)
+    sym = np.array([0] * 5 + [1] * 5)
+    x = np.arange(10, dtype=float)
+    m = ct.window_mean(x, sym, np.array([4, 2, 6, -1]), 3)
+    assert m[0] == pytest.approx(3.0) and m[1] == pytest.approx(1.0)
+    assert np.isnan(m[2]) and np.isnan(m[3])            # reaches back into the other stock / before the data
