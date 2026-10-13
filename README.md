@@ -166,11 +166,15 @@ fall (one event per crash), keeps the stocks that pass the universe filter ($5, 
 prints the raw 1-20 day return of a long from that close (or the next open), after costs, then splits one
 pick by what was known at entry (200-day, S&P trend, index member or just dropped from one, gap, close in
 the range, volume, prior move, price), by 5-year block and by year. No stops or exits yet.
+It also has a gap-down capitulation table, the spike short's gap rule flipped: after a stock closes
+30/50/70%+ under its 10-bar high, buy the first open below the prior day's low (`--min-gap`), split by gap
+size, run size, S&P trend and price, and by year for `--gap-pick`.
 
 ```
 python crash_rebound/crash_events.py --start 2010-01-01
 python crash_rebound/crash_events.py --start 2010-01-01 --pick 1:20 --sample 10
 python crash_rebound/crash_events.py --start 2010-01-01 --entry next_open
+python crash_rebound/crash_events.py --start 2010-01-01 --gap-pick 50 --min-gap 2
 ```
 
 ## Setup (Windows machine with Norgate)

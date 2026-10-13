@@ -67,3 +67,41 @@ def test_upward_break_drops_the_window_and_delisting_uses_last_close():
     df = frame([100] * 5 + [50, 40, 30])                      # stops trading two bars later
     f = ce.forward(df, df["symbol"].cat.codes.to_numpy(), np.array([5]), market(df), "close")
     assert f["r10"][0] == pytest.approx(-0.4) and f["delisted"][0]
+
+
+def bars(rows):
+    """rows of (open, high, low, close) -> a one-stock frame with a full universe."""
+    o, h, l, c = (np.array([r[k] for r in rows], float) for k in range(4))
+    df = frame(c, o)
+    df["high"], df["low"] = h, l
+    df["unadj_close"] = c
+    return df
+
+
+def test_gap_down_signal_is_the_day_before_the_first_open_under_the_prior_low():
+    flat = (100, 101, 99, 100)
+    # down 40% from the 10-bar high by bar 12, then bar 13 opens at 55, under bar 12's low of 58
+    rows = [flat] * 10 + [(90, 91, 75, 78), (77, 78, 62, 65), (64, 66, 58, 60), (55, 63, 54, 62),
+                          (61, 62, 50, 52), (51, 53, 50, 52)] + [(52, 53, 51, 52)] * 12
+    df = bars(rows)
+    codes = df["symbol"].cat.codes.to_numpy()
+    keep = np.ones(len(df), dtype=bool)
+    sig = ce.gap_down_signals(df, codes, keep, 30, 0)
+    assert list(np.flatnonzero(sig["run"])) == [11]           # 65 is 35% under 100: first run day
+    assert list(np.flatnonzero(sig["gap"])) == [12]           # bar 13 opens 55, under bar 12's low of 58
+    assert sig["gap_pct"][12] == pytest.approx((55 / 58 - 1) * 100)
+    assert sig["green_next"][12]                              # bar 13 closed 62 above its 55 open
+    assert not ce.gap_down_signals(df, codes, keep, 30, 10)["gap"].any()   # gap is only 5%
+
+
+def test_gap_down_buy_open_return_runs_from_the_gap_open():
+    flat = (100, 101, 99, 100)
+    rows = [flat] * 10 + [(90, 91, 75, 78), (77, 78, 62, 65), (64, 66, 58, 60), (55, 63, 54, 62)] + \
+           [(62, 63, 61, 62)] * 15
+    df = bars(rows)
+    codes = df["symbol"].cat.codes.to_numpy()
+    sig = ce.gap_down_signals(df, codes, np.ones(len(df), dtype=bool), 30, 0)
+    ev = ce.gap_way_events(df, codes, market(df), sig, ce.GAP_WAYS[1])
+    assert ev["r10"][0] == pytest.approx(62 / 55 - 1)
+    ev = ce.gap_way_events(df, codes, market(df), sig, ce.GAP_WAYS[2])        # buy the gap day's close
+    assert ev["r10"][0] == pytest.approx(0.0)
