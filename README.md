@@ -250,6 +250,18 @@ python crash_bounce/bounce_short.py --start 2010-01-01 --target 0.9 --hold 20 --
 python crash_bounce/bounce_short.py --start 2010-01-01 --skip-spike 20
 ```
 
+The frozen rule is `prev:touch:1:0`, hold 10 (holdout passed 2026-10-13).
+`crash_bounce/account_report.py` trades it and the live spike short (its frozen rule, without the
+judges) through a small account, each alone and both together. It prints the per-trade numbers in % of
+the position and in R (1R = 25%, the spike short's stop), the balance from `--capital` (default
+$10,000) at each year end, the worst drop, and the time in trades: how often a short is open, how many
+at once, and how much of the account is short.
+
+```
+python crash_bounce/account_report.py --start 2010-01-01
+python crash_bounce/account_report.py --start 2010-01-01 --universe all --unlock-holdout --sizes 5,10
+```
+
 ## Setup (Windows machine with Norgate)
 
 ```
