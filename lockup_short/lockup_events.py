@@ -54,6 +54,7 @@ HOW TO RUN:
   python lockup_short/lockup_events.py --start 2010-01-01 --pick=-3:1 --sample 10   (the = is needed before a minus)
   python lockup_short/lockup_events.py --start 2010-01-01 --spacs keep
   python lockup_short/lockup_events.py --start 2010-01-01 --min-price 1 --liq-top-pct 100   # small caps too
+  python lockup_short/lockup_events.py --start 2010-01-01 --pick=-20:10 --min-dv 20        # liquid names only
 
 The pick's table splits it by size and liquidity at the day -20 close (price, 50-day
 dollar volume, dollar volume in the listing month as a stand-in for size at the IPO;
@@ -395,9 +396,10 @@ def fill_young_liquidity(df, rows, first):
     return dv_pct
 
 
-def select_events(df, codes, P, days, data_start, spacs, start, end, keep_market=None):
+def select_events(df, codes, P, days, data_start, spacs, start, end, keep_market=None, min_dv=0.0):
     """Events for one lock-up length, inside the dates and passing the universe at
-    the day UNIVERSE_DAY close. Returns (events, left-out counts, found, inside dates)."""
+    the day UNIVERSE_DAY close (and, with min_dv, a 50-day dollar volume of at least
+    min_dv $M a day there). Returns (events, left-out counts, found, inside dates)."""
     ev, left = find_events(df, codes, days, data_start, spacs)
     n_found = len(ev)
     if start:
@@ -416,6 +418,12 @@ def select_events(df, codes, P, days, data_start, spacs, start, end, keep_market
     if keep_market is not None:
         ok_rows &= keep_market[d.index.to_numpy()]
     ok = inside & ok_rows.reindex(u).fillna(False).to_numpy(dtype=bool)
+    if min_dv > 0 and len(u):
+        dv = df["dv50"].to_numpy(np.float64)[u]
+        young = ~np.isfinite(dv)
+        if young.any():
+            dv[young] = young_dv(df, u[young], f[young])
+        ok &= dv >= min_dv * 1e6
     return ev[ok].reset_index(drop=True), left, n_found, n_dates
 
 
@@ -426,7 +434,8 @@ def age_table(df, codes, spx, P, args, data_start, keep_market):
     ages = sorted(set(AGES + [args.days]))
     rows = []
     for age in ages:
-        ev, _, _, _ = select_events(df, codes, P, age, data_start, args.spacs, args.start, args.end, keep_market)
+        ev, _, _, _ = select_events(df, codes, P, age, data_start, args.spacs, args.start, args.end, keep_market,
+                                    args.min_dv)
         out = {"day0_at": f"{age}d", "events": len(ev)}
         if ev.empty:
             rows.append(out)
@@ -561,6 +570,8 @@ def main():
                         help="A:B = short the close of day A, cover the close of day B (default -5:5; write --pick=-3:1)")
     parser.add_argument("--spacs", choices=["drop", "keep"], default="drop",
                         help="Leave out stocks whose first bars sit at a SPAC's $10 (default) or keep them")
+    parser.add_argument("--min-dv", type=float, default=0.0,
+                        help="Only stocks trading at least this many $M a day (50-day average) at the day -20 close")
     parser.add_argument("--borrow-pct", type=float, default=5.0, help="Borrow fee, %% a year")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
     parser.add_argument("--save-events", type=str, default=None, help="Write every event to this CSV")
@@ -588,12 +599,13 @@ def main():
     if rules.market_columns(P):
         keep_market = rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
     ev, left, n_found, n_dates = select_events(df, codes, P, args.days, data_start, args.spacs,
-                                               args.start, args.end, keep_market)
+                                               args.start, args.end, keep_market, args.min_dv)
 
     print("=" * 110)
     print(f"LOCK-UP EXPIRY SHORT  day 0 = first bar + {args.days} calendar days  universe={args.universe}  "
           f"start={args.start}  end={args.end}  market={P['market']}  liq top {P['liq_top_pct']:g}%  "
-          f"min price ${P['min_price']:g}  borrow {args.borrow_pct:g}%/yr  ({time.time() - t0:.1f}s)")
+          f"min price ${P['min_price']:g}  min $ volume {args.min_dv:g}M/day  borrow {args.borrow_pct:g}%/yr  "
+          f"({time.time() - t0:.1f}s)")
     print("=" * 110)
     print(f"New listings found (all years): {n_found:,}. Left out before that: "
           + ", ".join(f"{v:,} {k}" for k, v in left.items()) + ".")
@@ -701,7 +713,7 @@ def main():
             phase="lockup", split=args.universe, script="lockup_events.py",
             params={"start": args.start, "end": args.end, "days": args.days, "pick": args.pick,
                     "spacs": args.spacs, "market": P["market"], "liq_top_pct": P["liq_top_pct"],
-                    "min_price": P["min_price"], "borrow_pct": args.borrow_pct},
+                    "min_price": P["min_price"], "min_dv": args.min_dv, "borrow_pct": args.borrow_pct},
             combinations=len(grid), runs=1, results=res)
 
 
