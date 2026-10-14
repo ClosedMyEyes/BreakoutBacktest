@@ -124,3 +124,56 @@ def test_parse_pick_and_bins():
     assert [int(m.sum()) for _, m in b] == [2, 1, 1]
     p = ge.bins_of(pd.Series([3.0, 60.0]), ge.PRICE_BINS, lambda x: f"${x:g}")
     assert p[0][0] == "under $10" and p[-1][0] == "$50+"
+
+
+def test_the_day_0_open_entry_catches_the_day_after_the_open():
+    df, codes = panel(toy("UPP"), toy("DWN"))
+    ru = int(df.index[df["symbol"] == "UPP"][0]) + 60
+    rd = int(df.index[df["symbol"] == "DWN"][0]) + 60
+    gap_at(df, ru, 10)                                              # opens 22
+    gap_at(df, rd, -10)                                             # opens 18
+    df.loc[ru, "close"] = 23.1                                      # +5% from the open
+    df.loc[rd, "close"] = 17.1                                      # -5% from the open
+    ev, _ = ge.find_gaps(df, codes)
+    ev = ev.sort_values("sign").reset_index(drop=True)              # DWN, UPP
+    out = ge.trades(ev, df, spx_flat(df), "day0", 0, borrow_pct=5.0)
+    cost = ge.ce.round_trip_cost()
+    assert np.isclose(out["ret_day0:0"][1], 5.0 - cost)
+    assert np.isclose(out["ret_day0:0"][0], 5.0 - cost - 5.0 / 252)
+    assert np.isclose(out["hedged_day0:0"][1], 5.0 - cost)
+    assert ge.parse_pick("day0:0") == ("day0", 0)
+
+
+def with_feature_columns(df):
+    c = df["close"].to_numpy()
+    return df.assign(unadj_close=c, dv50=c * df["volume"], sma200=np.nan, in_sp500=0, in_sp400=0, in_sp600=0,
+                     hi52_c=25.0, lo52_c=20.0)
+
+
+def test_the_lead_up_is_measured_in_the_gaps_direction_up_to_the_prior_close():
+    df, codes = panel(toy("UPP"), toy("DWN"))
+    rows = {}
+    for s, pct in [("UPP", 8), ("DWN", -8)]:
+        r = int(df.index[df["symbol"] == s][0]) + 60
+        df.loc[r - 10:r - 1, "close"] = 22.0                        # +10% over the last 10 bars
+        df.loc[r - 10:r - 1, "volume"] = 2000.0                     # twice the usual volume
+        df.loc[r - 5, "high"], df.loc[r - 15, "low"] = 25.0, 18.0   # a 7-point range in 20 bars
+        gap_at(df, r, pct)
+        rows[s] = r
+    df = with_feature_columns(df)
+    ev, _ = ge.find_gaps(df, codes)
+    ev = ev.sort_values("sign").reset_index(drop=True)              # DWN, UPP
+    first, _ = ge.stock_bounds(codes)
+    spx200 = pd.Series(1.0, index=pd.DatetimeIndex(np.sort(df["date"].unique())))
+    ev = ge.features(ev, df, spx200, ge.usual_volume(df["volume"].to_numpy(), first))
+    assert np.allclose(ev["move10"], [-10.0, 10.0]) and np.allclose(ev["move20"], [-10.0, 10.0])
+    assert np.allclose(ev["range20"], 7 / 22 * 100)
+    assert np.allclose(ev["build10"], 2.0)
+    assert np.allclose(ev["from_extreme"], [10.0, 12.0])            # 22 vs a 20 low, 22 vs a 25 high
+    assert np.isnan(ev["above200"]).all() and (ev["spx_above200"] == 1).all()
+
+
+def test_keep_only_keeps_one_bucket():
+    ev = pd.DataFrame({"move20": [-15.0, 0.0, 5.0, 10.0, np.nan], "build10": [1.0, 2.0, 0.5, 1.0, 1.0]})
+    assert list(ge.keep_only(ev, ["move20:0:10"])["move20"]) == [0.0, 5.0]
+    assert list(ge.keep_only(ev, ["move20:-inf:10", "build10:0:1.5"])["move20"]) == [-15.0, 5.0]

@@ -35,11 +35,20 @@ HOW TO RUN:
   python gap_followthrough/gap_events.py --start 2010-01-01 --pick open:20 --sample 10
   python gap_followthrough/gap_events.py --start 2010-01-01 --min-gap 10 --min-vol-x 5
   python gap_followthrough/gap_events.py --start 2010-01-01 --size sp500        # S&P 500 stocks only
+  python gap_followthrough/gap_events.py --start 2010-01-01 --only move20:0:10   # one lead-up bucket, by block
 
 The day-by-day profile shows the move in the gap's direction around day 0 against
 the S&P. The pick's table splits both directions by gap size, volume, S&P index,
 price, dollar volume, what the stock did after the open on day 0, its 60-day move
 before the gap, and the stock and the S&P against their 200-day averages.
+
+Added after the first Dev run (the close:20 pick had no edge either way):
+  DAY 0 FROM THE OPEN   in at the day 0 open, out at the close of day 0, 1, 5 or 20, on every
+                        gap with no volume rule (all known at the open) and on the volume-rule
+                        events (their day 0 volume is only known at the close, so flattered)
+  LEAD-UP               the pick by the 10-, 20- and 30-day move before the gap, the 20-day
+                        range, the last 10 days' volume and the distance from the 52-week
+                        high (up gaps) or low (down gaps), all at the prior close
 """
 
 import argparse
@@ -79,12 +88,21 @@ DV_BINS = [0, 5, 20, 100, np.inf]   # $M a day
 RUN_EDGES = [-np.inf, -20, 0, 20, np.inf]
 HOLD_BAND = 2.0                     # day 0 close within this % of the open = held near the open
 SIDES = [("up", 1), ("down", -1)]
+# The lead-up table: the 10-30 days before the gap, judged at the prior close
+LEAD_MOVE_EDGES = {10: [-np.inf, -10, -5, 0, 5, 10, np.inf],
+                   20: [-np.inf, -20, -10, 0, 10, 20, np.inf],
+                   30: [-np.inf, -20, -10, 0, 10, 20, np.inf]}
+RANGE_BARS, RANGE_EDGES = 20, [0, 10, 15, 20, 30, np.inf]          # 20-day high-low range, % of price
+BUILD_BARS, BUILD_EDGES = 10, [0, 0.8, 1.0, 1.25, 1.5, 2.0, np.inf]  # 10-day volume vs the usual before it
+EXTREME_EDGES = [0, 2, 10, 25, 50, np.inf]                          # % from the 52-week high (up) / low (down)
+DAY0_HOLDS = [0, 1, 5, 20]          # in at the day 0 open: out at the close of day 0, 1, 5, 20
 
 
 def parse_pick(spec):
-    """'close:20' -> ('close', 20)."""
+    """'close:20' -> ('close', 20). Entries: close (day 0 close), open (day 1 open) or
+    day0 (the day 0 open, which may be held to that day's close: day0:0)."""
     entry, hold = str(spec).split(":")
-    if entry not in ENTRIES or int(hold) < 1:
+    if entry not in ENTRIES + ["day0"] or int(hold) < (0 if entry == "day0" else 1):
         raise ValueError(spec)
     return entry, int(hold)
 
@@ -164,8 +182,9 @@ def select(df, codes, P, args, keep_market=None):
 
 
 def trades(ev, df, spx, entry, hold, borrow_pct):
-    """Go with the gap: in at the day 0 close or the day 1 open, out at the close of day
-    hold. Returns ret_ / hedged_ / adv_ columns named entry:hold (ret and hedged in %)."""
+    """Go with the gap: in at the day 0 close, the day 1 open or the day 0 open (day0),
+    out at the close of day hold (day0 may hold 0: out at the day 0 close). Returns ret_ /
+    hedged_ / adv_ columns named entry:hold (ret and hedged in %)."""
     o = df["open"].to_numpy(np.float64)
     c = df["close"].to_numpy(np.float64)
     h = df["high"].to_numpy(np.float64)
@@ -175,10 +194,12 @@ def trades(ev, df, spx, entry, hold, borrow_pct):
     dates = df["date"].to_numpy()
     r, last, sign = ev["row"].to_numpy(), ev["last"].to_numpy(), ev["sign"].to_numpy()
     j = np.minimum(r + hold, last)
-    ok = j > r
+    ok = j >= r if entry == "day0" else j > r
     if entry == "open":
         ok &= r + 1 <= last
         px = np.where(ok, o[np.minimum(r + 1, last)], np.nan)
+    elif entry == "day0":
+        px = o[r]
     else:
         px = c[r]
     ok &= px > 0
@@ -187,12 +208,12 @@ def trades(ev, df, spx, entry, hold, borrow_pct):
     bad = ~ok | np.where(sign > 0, brk_up, brk_dn)
     pos = spx.index.get_indexer(pd.DatetimeIndex(dates))
     sc = spx.to_numpy()
-    pi, pj = pos[r], pos[j]
+    pi, pj = pos[r - 1 if entry == "day0" else r], pos[j]     # day0: the S&P from the prior close
     sp = np.where((pi >= 0) & (pj >= 0), sc[np.maximum(pj, 0)] / sc[np.maximum(pi, 0)] - 1, np.nan)
     days = np.maximum(j - r, 1)
     cost = ce.round_trip_cost() + np.where(sign < 0, borrow_pct * days / 252, 0.0)
     worst = np.zeros(len(r))                       # furthest against the trade, % of the entry
-    for k in range(1, hold + 1):
+    for k in range(0 if entry == "day0" else 1, hold + 1):
         jj = np.minimum(r + k, last)
         live = r + k <= j
         against = np.where(sign > 0, 1 - lo[jj] / px, h[jj] / px - 1) * 100
@@ -249,8 +270,9 @@ def profile(ev, df, spx, sign):
     return pd.DataFrame(rows)
 
 
-def features(ev, df, spx_above200):
-    """What is known at the day 0 close (and the prior close), for the split table."""
+def features(ev, df, spx_above200, usual_all):
+    """What is known at the day 0 close (and the prior close), for the split and lead-up
+    tables. usual_all = usual_volume() for every row of df."""
     o = df["open"].to_numpy(np.float64)
     c = df["close"].to_numpy(np.float64)
     r, first, sign = ev["row"].to_numpy(), ev["first"].to_numpy(), ev["sign"].to_numpy()
@@ -264,10 +286,40 @@ def features(ev, df, spx_above200):
         day0 = sign * (c[r] / c[p] - 1) * 100
         run = np.where(p - RUN_BARS >= first, sign * (c[p] / c[np.maximum(p - RUN_BARS, 0)] - 1) * 100, np.nan)
     ev["after_open"], ev["day0"], ev["run60"] = after_open, day0, run
+    # The lead-up, all ending at the prior close: the move in the gap's direction over 10 / 20 / 30
+    # bars, the 20-bar high-low range, the last 10 bars' volume against the usual volume before them
+    for k in LEAD_MOVE_EDGES:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            ev[f"move{k}"] = np.where(p - k >= first, sign * (c[p] / c[np.maximum(p - k, 0)] - 1) * 100, np.nan)
+    h, lo, vol = (df[k].to_numpy(np.float64) for k in ["high", "low", "volume"])
+    rng, build = np.full(len(r), np.nan), np.full(len(r), np.nan)
+    for n, (pp, f) in enumerate(zip(p, first)):
+        a = pp - RANGE_BARS + 1
+        if a >= f and c[pp] > 0:
+            rng[n] = (np.nanmax(h[a:pp + 1]) - np.nanmin(lo[a:pp + 1])) / c[pp] * 100
+        b = pp - BUILD_BARS + 1
+        if b >= f and usual_all[b] > 0:
+            build[n] = np.nanmean(vol[b:pp + 1]) / usual_all[b]
+    ev["range20"], ev["build10"] = rng, build
+    hi52, lo52 = (df[k].to_numpy(np.float64)[p] for k in ["hi52_c", "lo52_c"])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ev["from_extreme"] = np.where(sign > 0, (1 - c[p] / hi52) * 100, (c[p] / lo52 - 1) * 100)
     sma = df["sma200"].to_numpy(np.float64)[p]
     ev["above200"] = np.where(np.isfinite(sma), (c[p] > sma).astype(float), np.nan)
     ev["spx_above200"] = spx_above200.reindex(pd.DatetimeIndex(df["date"].to_numpy()[p])).to_numpy()
     return ev
+
+
+def keep_only(ev, specs):
+    """Keep the events whose column is in [lo, hi) for every 'col:lo:hi' spec (-inf / inf allowed),
+    e.g. move20:0:10."""
+    for spec in specs:
+        col, lo, hi = spec.split(":")
+        if col not in ev.columns:
+            raise SystemExit(f"--only: no column {col}")
+        v = ev[col]
+        ev = ev[(v >= float(lo)) & (v < float(hi))]
+    return ev.reset_index(drop=True)
 
 
 def edges_of(lo, inner):
@@ -288,15 +340,27 @@ def bins_of(v, edges, fmt):
     return out
 
 
-def split_table(g, name, years, min_gap, min_vol_x):
-    """The pick for up gaps (buys) and down gaps (shorts) side by side, by what was
-    known at the day 0 close."""
+def side_by_side(g, name, years, groups):
+    """The trade `name` for up gaps (buys) and down gaps (shorts) side by side, one row per
+    (group, [(bucket, mask)])."""
     def side(mask, sign):
         s = g.loc[np.asarray(mask, dtype=bool) & (g["sign"] == sign).to_numpy()]
         st = stats(s, name, years)
         return {"ev": st["events"], "ret": st.get("ret", np.nan), "hedged": st.get("hedged", np.nan),
                 "win_%": st.get("win_%", np.nan), "t_h": st.get("t_hedged", np.nan)}
 
+    rows = []
+    for group, buckets in groups:
+        for label, mask in buckets:
+            up, dn = side(mask, 1), side(mask, -1)
+            rows.append({"group": group, "bucket": label, **{f"up_{k}": v for k, v in up.items()},
+                         **{f"dn_{k}": v for k, v in dn.items()}})
+    return pd.DataFrame(rows)
+
+
+def split_table(g, name, years, min_gap, min_vol_x):
+    """The pick for up gaps (buys) and down gaps (shorts) side by side, by what was
+    known at the day 0 close."""
     pct = lambda x: f"{x:g}%"
     money = lambda x: f"${x:g}"
     held = g["after_open"]
@@ -318,12 +382,33 @@ def split_table(g, name, years, min_gap, min_vol_x):
         ("S&P vs its 200-day", [("above", (g["spx_above200"] == 1).to_numpy()),
                                 ("below", (g["spx_above200"] == 0).to_numpy())]),
     ]
+    return side_by_side(g, name, years, groups)
+
+
+def lead_groups(g):
+    """The lead-up buckets: what the stock did in the 10-30 days up to the prior close."""
+    pct = lambda x: f"{x:g}%"
+    return ([(f"{k}-day move before, in the gap's direction", bins_of(g[f"move{k}"], e, pct))
+             for k, e in LEAD_MOVE_EDGES.items()]
+            + [(f"{RANGE_BARS}-day high-low range, % of price", bins_of(g["range20"], RANGE_EDGES, pct)),
+               (f"last {BUILD_BARS} days' volume vs usual", bins_of(g["build10"], BUILD_EDGES, lambda x: f"{x:g}x")),
+               ("% below the 52-week high (up) / above the 52-week low (down)",
+                bins_of(g["from_extreme"], EXTREME_EDGES, pct))])
+
+
+def day0_table(sets, df, spx, years, borrow_pct):
+    """In at the day 0 open, out at the close of each DAY0_HOLDS day, for each set of gaps
+    (label, events) and direction."""
     rows = []
-    for group, buckets in groups:
-        for label, mask in buckets:
-            up, dn = side(mask, 1), side(mask, -1)
-            rows.append({"group": group, "bucket": label, **{f"up_{k}": v for k, v in up.items()},
-                         **{f"dn_{k}": v for k, v in dn.items()}})
+    for label, evs in sets:
+        evs = evs.reset_index(drop=True)
+        for hh in DAY0_HOLDS:
+            name = f"day0:{hh}"
+            t = pd.concat([evs[["sign", "date"]], pd.DataFrame(trades(evs, df, spx, "day0", hh, borrow_pct))], axis=1)
+            for side, sign in SIDES:
+                st = stats(t[t["sign"] == sign], name, years)
+                rows.append({"gaps": label, "gap": side, "trade": "buy" if sign > 0 else "short",
+                             "out_close_day": hh, **st})
     return pd.DataFrame(rows)
 
 
@@ -354,7 +439,12 @@ def main():
                         help="Day 0 volume vs the 50 days before (3)")
     parser.add_argument("--dedupe", type=int, default=DEDUPE, help="A stock's first gap in this many bars (20)")
     parser.add_argument("--pick", type=str, default=PICK,
-                        help="entry:hold, entry close (day 0 close) or open (day 1 open), hold in days (close:20)")
+                        help="entry:hold, entry close (day 0 close), open (day 1 open) or day0 (day 0 open), "
+                             "hold in days (close:20)")
+    parser.add_argument("--only", action="append", default=[],
+                        help="Keep events with a column in [lo, hi), e.g. --only move20:0:10 (columns: move10, "
+                             "move20, move30, range20, build10, from_extreme, run60, after_open, gap, vol_x, price, "
+                             "dv_m); may be given more than once")
     parser.add_argument("--borrow-pct", type=float, default=5.0, help="Borrow fee for the shorts, %% a year")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
     parser.add_argument("--save-events", type=str, default=None, help="Write every event to this CSV")
@@ -365,7 +455,7 @@ def main():
 
     t0 = time.time()
     cols = (rules.universe_columns(P) + ["open", "high", "low", "close", "volume", "dv50", "sma200", "bad_bar",
-                                         "bad_bar_dn", "in_sp500", "in_sp400", "in_sp600"])
+                                         "bad_bar_dn", "in_sp500", "in_sp400", "in_sp600", "hi52_c", "lo52_c"])
     load_from = (pd.Timestamp(args.start) - pd.Timedelta(days=LOAD_PAD_DAYS)) if args.start else None
     try:
         df = datastore.load_panel(cols, start=load_from, end=args.end, universe=args.universe,
@@ -383,7 +473,8 @@ def main():
         keep_market = rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
     ev, counts = select(df, codes, P, args, keep_market)
     first, _ = stock_bounds(codes)
-    ev["usual_vol"] = usual_volume(df["volume"].to_numpy(), first)[ev["row"].to_numpy()]
+    usual_all = usual_volume(df["volume"].to_numpy(), first)
+    ev["usual_vol"] = usual_all[ev["row"].to_numpy()]
 
     print("=" * 110)
     print(f"BIG-GAP FOLLOW-THROUGH  gap {args.min_gap:g}%+ at the open on {args.min_vol_x:g}x+ volume  "
@@ -403,7 +494,13 @@ def main():
           f"Median gap {ev['gap'].abs().median():.1f}%, median volume {ev['vol_x'].median():.1f}x usual.")
     pd.set_option("display.width", 250)
 
-    ev = features(ev, df, spx200)
+    ev = features(ev, df, spx200, usual_all)
+    if args.only:
+        ev = keep_only(ev, args.only)
+        print(f"Kept {len(ev):,} events with {' and '.join(args.only)} "
+              f"({(ev['sign'] > 0).sum():,} up, {(ev['sign'] < 0).sum():,} down).")
+        if ev.empty:
+            return
     for label, sign in SIDES:
         g = ev[ev["sign"] == sign]
         print(f"\nDay by day around the {label} gaps ({len(g):,}), in the gap's direction: vs_spx = average move "
@@ -432,12 +529,38 @@ def main():
                          **stats(g, f"{e}:{hh}", years)})
     print(pd.DataFrame(rows).round(2).to_string(index=False))
 
+    # The day 0 open: the gap is known then but the day's volume is not, so the gaps with no volume
+    # rule are the tradable set; the volume-rule set shows how much knowing the volume flatters it
+    any_vol, _ = select(df, codes, P, argparse.Namespace(**{**vars(args), "min_vol_x": 0.0}), keep_market)
+    if args.only:
+        any_vol = keep_only(features(any_vol, df, spx200, usual_all), args.only)
+    sets = [("any volume", any_vol), (f"{args.min_vol_x:g}x+ volume", ev)]
+    print(f"\nDAY 0 FROM THE OPEN: in at the day 0 open with the gap (buy up, short down), out at the close of "
+          f"day 0, 1, 5 or 20. 'any volume' = every {args.min_gap:g}%+ gap that passed the universe "
+          f"({(any_vol['sign'] > 0).sum():,} up, {(any_vol['sign'] < 0).sum():,} down), all known at the open. "
+          f"'{args.min_vol_x:g}x+ volume' = this study's events, whose volume is only known at the close, so their "
+          f"day 0 rows are flattered. hedged uses the S&P from the prior close (only S&P closes are stored). "
+          f"The open of a big gap is a hard price to get, so the {cost:.2f}% round trip is on the light side.")
+    print(day0_table(sets, df, spx, years, args.borrow_pct).round(2).to_string(index=False))
+
     name = f"{entry}:{hold}"
     pick = ev[ev[f"ret_{name}"].notna()].reset_index(drop=True)
-    print(f"\nPICK: in at the {'day 0 close' if entry == 'close' else 'day 1 open'}, out at the close of day {hold} "
+    entry_label = {"close": "day 0 close", "open": "day 1 open", "day0": "day 0 open"}[entry]
+    print(f"\nPICK: in at the {entry_label}, out at the close of day {hold} "
           f"({len(pick):,} trades). up_ = buying the up gaps, dn_ = shorting the down gaps; ret / hedged as above, "
           f"t_h = month-clustered t of hedged. Splits use what was known at the day 0 close.")
+    if entry == "day0":
+        print("In at the day 0 open, the volume and 'day 0 after the open' splits were not yet known.")
     print(split_table(pick, name, years, args.min_gap, args.min_vol_x).round(2).to_string(index=False))
+
+    lead = lead_groups(pick)
+    n_lead = sum(len(b) for _, b in lead)
+    print(f"\nLEAD-UP: the pick by what the stock did in the {min(LEAD_MOVE_EDGES)}-{max(LEAD_MOVE_EDGES)} days up "
+          f"to the prior close. Moves are in the gap's direction (+ = it was already going the gap's way). The range "
+          f"is the {RANGE_BARS}-day high minus low over the prior close; the volume is the last {BUILD_BARS} days' "
+          f"average over the usual before them. These are {n_lead} buckets a side, so a few will show t_h near 2 by "
+          f"chance; one is worth a follow-up only if it turns the sign and holds in every 5-year block.")
+    print(side_by_side(pick, name, years, lead).round(2).to_string(index=False))
 
     print("\nPick by 5-year block (t = of ret):")
     print(by_period(pick, name, ce.block_of(pick["date"])).round(2).to_string(index=False))
@@ -458,14 +581,16 @@ def main():
 
     if args.save_events:
         keep = ["symbol", "date", "sign", "gap", "vol_x", "price", "dv_m", "index", "after_open", "day0", "run60",
-                "above200", "spx_above200"] + [f"ret_{e}:{hh}" for e, hh in grid]
+                "above200", "spx_above200"] + [f"move{k}" for k in LEAD_MOVE_EDGES] + \
+            ["range20", "build10", "from_extreme"] + [f"ret_{e}:{hh}" for e, hh in grid]
         ev[keep].to_csv(args.save_events, index=False)
         print(f"\nSaved {len(ev)} events to {args.save_events}")
 
     print(f"\nWorth building on, set before the first run: the pick's ret clearly above 0 after costs in one "
           f"direction, month-clustered t above 2, positive in more than half the years and in the recent blocks, "
           f"and big enough to matter (about 5% a trade, or a smaller edge with about 50+ trades a year). Grid rows "
-          f"other than the pick are {len(grid) * 2 - 2} more tries, so read them as context.")
+          f"other than the pick are {len(grid) * 2 - 2} more tries and the day 0 and lead-up tables "
+          f"{len(DAY0_HOLDS) * 4 + n_lead * 2} more, so read them as context.")
 
     if not args.no_log:
         res = {}
@@ -476,9 +601,10 @@ def main():
             question="Do liquid stocks keep going after a big gap on heavy volume?",
             phase="gap", split=args.universe, script="gap_events.py",
             params={"start": args.start, "end": args.end, "min_gap": args.min_gap, "min_vol_x": args.min_vol_x,
-                    "dedupe": args.dedupe, "pick": args.pick, "market": P["market"], "size": P["size"],
+                    "dedupe": args.dedupe, "pick": args.pick, "only": args.only, "market": P["market"],
+                    "size": P["size"],
                     "liq_top_pct": P["liq_top_pct"], "min_price": P["min_price"], "borrow_pct": args.borrow_pct},
-            combinations=len(grid) * 2, runs=1, results=res)
+            combinations=len(grid) * 2 + len(DAY0_HOLDS) * 4 + n_lead * 2, runs=1, results=res)
 
 
 if __name__ == "__main__":
