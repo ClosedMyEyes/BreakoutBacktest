@@ -1,5 +1,8 @@
 # Lock-up expiry short
 
+**Status: parked.** The frozen rule failed its one run on the locked half (2026-10-14): +1.62% a trade,
+t 0.88. See "Holdout result" at the end.
+
 Idea #3 from the project's `ideas/next_setups.md`. Insiders and early investors are usually barred from
 selling for 180 days after an IPO. When the lock-up ends, a big block of new supply can hit the market on
 a date that was known from the listing day. Does the stock fall around that day, by enough to short it
@@ -60,3 +63,25 @@ grew smoothly with dollar volume. Pass bar on the locked half, set before it run
 The full run ends with the 5 worst trades, losses and the account's return by year, and an account test
 (`--sizes 5,10`: each short is that % of the account when it opens, marked at every close) with the worst
 drop from a high.
+
+## Holdout result
+
+Run once on the locked half on 2026-10-14 (`--frozen --universe holdout --unlock-holdout`). **Failed the bar.**
+
+| | Dev | Locked half |
+|---|---|---|
+| Trades (a year) | 242 (14.6) | 236 (14.3) |
+| Short, % a trade after costs (t) | +5.00 (2.89) | +1.62 (0.88) |
+| Hedged with the S&P (t) | +6.13 (3.85) | +2.96 (1.68) |
+| Years up | 12 of 17 | 9 of 17 |
+| Account at 5% a short: worst drop | -15.4% | -18.2% |
+| Account at 10% a short: worst drop | -29.1% | -34.1% |
+
+What held up: the stocks still lagged the S&P by about 3.4% into day 0, and volume still rose on day 0 only
+at 180 days, so lock-up selling is real. What did not: after day 0 the locked-half stocks bounced instead of
+sliding further, and day 180 was not special there (young liquid stocks lagged the S&P about as much with
+day 0 at 150, 240 or 300 days). Dev's clean result was mostly the general young-stock lag plus luck.
+
+The worst locked-half trades lost more than the position: LMND -156% (2020-21), CRON -104% (2018). Up to
+13 shorts were open at once in the 2020-21 IPO wave. Covering at day +3 and the $100M+/day names did better
+on the locked half, but both were picked after seeing it, so they would need trades from here on to count.
