@@ -34,6 +34,8 @@ shows up here because build_data.py drops OTC bars.
 
 The universe is judged at the close of day -20, before any entry: $5 printed
 close, the top 80% by 50-day dollar volume, no recent price break, not pinned.
+A stock with fewer than 50 bars (day -20 of a 90-day lock-up) is ranked on its
+dollar volume since the first bar instead.
 A stock that stops trading inside a window covers at its last close. A window
 across a downward price break is left out (an untrusted gain for a short); an
 upward one counts as a real loss.
@@ -58,6 +60,10 @@ dollar volume, dollar volume in the listing month as a stand-in for size at the 
 the data has no market caps), by the move since listing, and by volume around day 0
 after the fact, next to the wider windows -20:0, 0:20 and -20:20.
 
+DOES THE DATE MATTER? repeats the main windows with day 0 at 90 to 365 days after
+the first bar. A lock-up effect should stand out at 180 (and 90); the same drift
+at every age means young stocks lag in general.
+
 The VOLATILITY tables (after the day-by-day profile) ask whether stocks swing more
 around day 0 in either direction: the size of daily moves, ranges and gaps, and
 5-day blocks from day -60 to +40, each against the stock's own usual.
@@ -67,6 +73,7 @@ import argparse
 import os
 import sys
 import time
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -94,6 +101,8 @@ DV_BINS = [0, 0.5, 2, 5, 20, 100, np.inf]                # dollar volume, $M a d
 RUN_BINS = [-100, -50, -20, 0, 25, 100, np.inf]          # % move since the first close
 SPIKE_BINS = [0, 1, 2, 4, np.inf]                        # volume around day 0 vs usual
 IPO_BARS = 20                                            # the listing month, for size at listing
+AGES = [90, 120, 150, 180, 210, 240, 300, 365]           # day 0 at these calendar days after the first bar
+AGE_WINDOWS = [(-20, 0), (-20, 10), (-20, 20), (-5, 5)]  # shown (hedged) in the age table
 VOL_BASE = (-60, -21)                # rows for the stock's usual volume
 DATA_START_GRACE = 30                # first bar this close to the data start = not a listing
 SPAC_BARS, SPAC_LO, SPAC_HI, SPAC_SHARE = 20, 9.5, 10.5, 0.9
@@ -340,20 +349,125 @@ def stats(g, name, years):
     return out
 
 
+def turnover_of(df):
+    """Daily dollar volume (Norgate's turnover, else close x volume)."""
+    c = df["close"].to_numpy(np.float64)
+    vol = df["volume"].to_numpy(np.float64)
+    tv = df["turnover"].to_numpy(np.float64) if "turnover" in df else c * vol
+    return np.where(np.isfinite(tv), tv, c * vol)
+
+
+def young_dv(df, rows, first):
+    """Average dollar volume over the last 50 bars, or since the first bar when the
+    stock is younger than that (dv50 needs 50 bars). $ a day, for each row."""
+    tv = turnover_of(df)
+    out = np.full(len(rows), np.nan)
+    for k, (r, f) in enumerate(zip(rows, first)):
+        out[k] = np.nanmean(tv[max(f, r - 49):r + 1])
+    return out
+
+
+_CROSS = {}
+
+
+def fill_young_liquidity(df, rows, first):
+    """dv_pct for stocks too young for a 50-day dollar volume (fewer than 50 bars):
+    their average dollar volume since the first bar, ranked against the 50-day dollar
+    volume of the listed stocks loaded that day (Dev only for a Dev run: half the
+    market, picked at random, so the same spread). Returns a copy of dv_pct."""
+    dv_pct = df["dv_pct"].to_numpy(np.float64).copy()
+    need = np.isnan(dv_pct[rows])
+    if not need.any():
+        return dv_pct
+    rows, first = rows[need], first[need]
+    mine = young_dv(df, rows, first)
+    d = df["date"].to_numpy()
+    if _CROSS.get("df") is not df:     # the day's spread of dv50, sorted once per panel
+        dv50 = df["dv50"].to_numpy(np.float64)
+        ok = np.isfinite(dv50) & (df["listed"].to_numpy() == 1)
+        cs = pd.DataFrame({"date": d[ok], "dv": dv50[ok]}).sort_values(["date", "dv"])
+        _CROSS.update(df=df, cd=cs["date"].to_numpy(), cv=cs["dv"].to_numpy())
+    cd, cv = _CROSS["cd"], _CROSS["cv"]
+    for r, m in zip(rows, mine):
+        lo, hi = np.searchsorted(cd, d[r], "left"), np.searchsorted(cd, d[r], "right")
+        if hi > lo and np.isfinite(m):
+            dv_pct[r] = np.searchsorted(cv[lo:hi], m, "right") / (hi - lo) * 100
+    return dv_pct
+
+
+def select_events(df, codes, P, days, data_start, spacs, start, end, keep_market=None):
+    """Events for one lock-up length, inside the dates and passing the universe at
+    the day UNIVERSE_DAY close. Returns (events, left-out counts, found, inside dates)."""
+    ev, left = find_events(df, codes, days, data_start, spacs)
+    n_found = len(ev)
+    if start:
+        ev = ev[ev["date"] >= pd.Timestamp(start)]
+    if end:
+        ev = ev[ev["date"] <= pd.Timestamp(end)]
+    ev = ev.reset_index(drop=True)
+    n_dates = len(ev)
+    u = ev["row"].to_numpy() + UNIVERSE_DAY
+    inside = u >= ev["first"].to_numpy()
+    u, f = np.where(inside, u, ev["row"].to_numpy()), ev["first"].to_numpy()
+    d = df.iloc[np.unique(u)].copy() if len(u) else df.iloc[:0].copy()
+    filled = fill_young_liquidity(df, u, f) if len(u) else df["dv_pct"].to_numpy()
+    d["dv_pct"] = filled[d.index.to_numpy()]
+    ok_rows = pd.Series(rules.universe_mask(d, P), index=d.index)
+    if keep_market is not None:
+        ok_rows &= keep_market[d.index.to_numpy()]
+    ok = inside & ok_rows.reindex(u).fillna(False).to_numpy(dtype=bool)
+    return ev[ok].reset_index(drop=True), left, n_found, n_dates
+
+
+def age_table(df, codes, spx, P, args, data_start, keep_market):
+    """Is day 180 special? The same windows with day 0 at other ages. If the stock
+    lags the S&P just as much at 150 or 240 days, the drift is young stocks lagging
+    in general, not the lock-up."""
+    ages = sorted(set(AGES + [args.days]))
+    rows = []
+    for age in ages:
+        ev, _, _, _ = select_events(df, codes, P, age, data_start, args.spacs, args.start, args.end, keep_market)
+        out = {"day0_at": f"{age}d", "events": len(ev)}
+        if ev.empty:
+            rows.append(out)
+            continue
+        out["per_yr"] = len(ev) / ce.span_years(ev["date"])
+        cols = {}
+        for a, b in AGE_WINDOWS:
+            cols.update(window(ev, df, spx, a, b, args.borrow_pct))
+        g = pd.concat([ev, pd.DataFrame(cols)], axis=1)
+        for a, b in AGE_WINDOWS:
+            out[f"hedged_{a}:{b}"] = g[f"hedged_{a}:{b}"].mean()
+        key = "-20:10"
+        out[f"t_hedged_{key}"] = ce.tstat_by_month(g[f"hedged_{key}"], g["date"])
+        out[f"short_{key}"] = g[f"short_{key}"].mean()
+        vol = df["volume"].to_numpy(np.float64)
+        r, f = g["row"].to_numpy(), g["first"].to_numpy()
+        base = np.array([np.nanmean(vol[max(fi, ri + VOL_BASE[0]):ri + VOL_BASE[1] + 1])
+                         if ri + VOL_BASE[1] >= fi else np.nan for ri, fi in zip(r, f)])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out["med_vol_x_day0"] = np.nanmedian(vol[r] / base)
+        rows.append(out)
+    return pd.DataFrame(rows)
+
+
 def entry_features(ev, df, spx_above200, a=UNIVERSE_DAY):
     """What is known at the close of day a (day -20 by default, before any entry in
     the grid), for the size table, plus one after-the-fact column (spike_x)."""
     c = df["close"].to_numpy(np.float64)
     u = df["unadj_close"].to_numpy(np.float64)
     vol = df["volume"].to_numpy(np.float64)
-    tv = df["turnover"].to_numpy(np.float64) if "turnover" in df else c * vol
-    tv = np.where(np.isfinite(tv), tv, c * vol)
+    tv = turnover_of(df)
     r, first, last = ev["row"].to_numpy(), ev["first"].to_numpy(), ev["last"].to_numpy()
-    i = r + a
+    i = np.maximum(r + a, first)
     ev["price"] = u[i]
     ev["since_listing"] = (c[i] / c[first] - 1) * 100
     ev["move20"] = np.where(i - 20 >= first, (c[i] / c[np.maximum(i - 20, 0)] - 1) * 100, np.nan)
-    ev["dv50_m"] = df["dv50"].to_numpy(np.float64)[i] / 1e6
+    dv = df["dv50"].to_numpy(np.float64)[i]
+    young = ~np.isfinite(dv)
+    if young.any():
+        dv[young] = young_dv(df, i[young], first[young])
+    ev["dv50_m"] = dv / 1e6
     ipo_dv, ipo_vol, usual, spike = (np.full(len(r), np.nan) for _ in range(4))
     for k in range(len(r)):
         f = first[k]
@@ -470,21 +584,11 @@ def main():
     spx200 = datastore.load_market(["spx_above200"]).set_index("date")["spx_above200"]
     data_start = pd.read_parquet(config.PRICES_FILE, columns=["date"])["date"].min()
 
-    ev, left = find_events(df, codes, args.days, data_start, args.spacs)
-    n_found = len(ev)
-    if args.start:
-        ev = ev[ev["date"] >= pd.Timestamp(args.start)]
-    if args.end:
-        ev = ev[ev["date"] <= pd.Timestamp(args.end)]
-    ev = ev.reset_index(drop=True)
-    n_dates = len(ev)
-
-    keep = rules.universe_mask(df, P)
+    keep_market = None
     if rules.market_columns(P):
-        keep &= rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
-    u = ev["row"].to_numpy() + UNIVERSE_DAY
-    ok = (u >= ev["first"].to_numpy()) & keep[np.maximum(u, 0)]
-    ev = ev[ok].reset_index(drop=True)
+        keep_market = rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
+    ev, left, n_found, n_dates = select_events(df, codes, P, args.days, data_start, args.spacs,
+                                               args.start, args.end, keep_market)
 
     print("=" * 110)
     print(f"LOCK-UP EXPIRY SHORT  day 0 = first bar + {args.days} calendar days  universe={args.universe}  "
@@ -509,7 +613,9 @@ def main():
     print("A volume bump near day 0 means the date lines up with real lock-up selling.")
     print(profile(ev, df, spx).round(2).to_string(index=False))
 
-    vd, vb = volatility(ev, df, spx)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)   # days before a young stock's first bar
+        vd, vb = volatility(ev, df, spx)
     print(f"\nVOLATILITY around day 0: does the stock swing more, either way? All in % vs the S&P. _x columns "
           f"= against the stock's own usual (days {VOL_BASE[0]} to {VOL_BASE[1]}), about 1 when nothing changes "
           f"and 1.3 for 30% bigger. New listings calm down as they age, so compare day 0 with the days either side.")
@@ -533,6 +639,14 @@ def main():
     print(f"\nEvery entry and cover day (short = unhedged short after a {cost:.2f}% round trip and "
           f"{args.borrow_pct:g}%/yr borrow; hedged = vs the S&P; b100 = at 100%/yr borrow):")
     print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    print(f"\nDOES THE DATE MATTER? The same windows (hedged = short vs the S&P after costs) with day 0 at other "
+          f"ages. If stocks lag as much at 150 or 240 days as at 180, the drift is young stocks lagging in "
+          f"general, not lock-up selling. med_vol_x_day0 = median volume on day 0 vs usual: a lock-up date should "
+          f"show a bump at 180 (and 90) only.")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        print(age_table(df, codes, spx, P, args, data_start, keep_market).round(2).to_string(index=False))
 
     name = f"{pa_}:{pb}"
     ev = entry_features(ev, df, spx200)

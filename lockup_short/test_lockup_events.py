@@ -129,3 +129,21 @@ def test_bins_label_and_split_every_value_once():
     assert labels[0] == "under $2" and labels[-1] == "$50+" and "$5 to $10" in labels
     hits = np.sum([m for _, m in b], axis=0)
     assert list(hits) == [1, 1, 1, 1, 0]
+
+
+def test_young_stock_gets_a_liquidity_rank_from_its_days_so_far():
+    old = toy("OLD", "2011-01-03", np.full(120, 10.0))
+    young = toy("NEW", "2011-04-01", np.full(30, 10.0))
+    df, codes = panel(old, young)
+    df["volume"] = np.where(df["symbol"] == "OLD", 1000.0, 5000.0)
+    df["turnover"] = df["close"] * df["volume"]
+    df["dv50"] = df.groupby("symbol", observed=True)["turnover"].transform(
+        lambda x: x.rolling(50, min_periods=50).mean())
+    df["dv_pct"] = np.where(df["dv50"].notna(), 50.0, np.nan)
+    df["listed"] = 1
+    r = int(np.flatnonzero(df["symbol"] == "NEW")[-1])
+    f = int(np.flatnonzero(df["symbol"] == "NEW")[0])
+    filled = le.fill_young_liquidity(df, np.array([r]), np.array([f]))
+    assert np.isnan(df["dv_pct"].iloc[r])
+    assert filled[r] == 100.0                      # $50k a day beats OLD's $10k
+    assert np.isclose(le.young_dv(df, np.array([r]), np.array([f]))[0], 50_000.0)
