@@ -6,10 +6,10 @@ saves them as Parquet files in config.DATA_DIR. Every later step reads these
 files, never Norgate directly, so the backtest and the scanner see the same data.
 
 HOW TO RUN:
-  python build_data.py                      # full Norgate pull
-  python build_data.py --limit 200          # first 200 symbols, for a quick test
-  python build_data.py --list-subtypes      # print Norgate security subtypes and exit
-  python build_data.py --source synthetic   # fake data, for building/debugging code
+  python pipeline/build_data.py                     # full Norgate pull
+  python pipeline/build_data.py --limit 200         # first 200 symbols, for a quick test
+  python pipeline/build_data.py --list-subtypes     # print Norgate security subtypes and exit
+  python pipeline/build_data.py --source synthetic  # fake data, for building/debugging code
 
 Done-when checks (plan Phase 1) are printed at the end: stocks per year,
 delisted count, symbols with missing trading days, split spot-check list.
@@ -18,15 +18,19 @@ delisted count, symbols with missing trading days, split spot-check list.
 import argparse
 import json
 import os
+import sys
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 
-import config
-import rules
-from data_sources import NorgateSource, SkipSymbol, SyntheticSource, listed_segments
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import rules  # noqa: E402
+from data_sources import NorgateSource, SkipSymbol, SyntheticSource, listed_segments  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--source",  choices=["norgate", "synthetic"], default="norgate")
@@ -53,7 +57,7 @@ def main():
         for (s1, s2), v in sorted(counts.items(), key=lambda kv: (str(kv[0][0]), -kv[1])):
             print(f"  {v:6d}  {s1} / {s2}")
         kept = [s for s in symbols if src.is_common_stock(s)]
-        print(f"\nKept as common stock with the current config.py filters: {len(kept)}")
+        print(f"\nKept as common stock with the current core/config.py filters: {len(kept)}")
         return
 
     t0 = time.time()
@@ -189,7 +193,7 @@ def sanity_checks(prices, symbols_df, market):
     if n_brk:
         b = table[brk]
         print(b.reindex(b["adjusted_chg%"].abs().sort_values(ascending=False).index).head(10).to_string(index=False))
-    print("  Look at one with: python show_data.py SYMBOL")
+    print("  Look at one with: python tools/show_data.py SYMBOL")
 
     # Dividends (charged to shorts): ex-dates found from the total-return gap
     div = prices["div"]
@@ -201,12 +205,12 @@ def sanity_checks(prices, symbols_df, market):
         print(f"{int((yld > config.DIV_MAX_PCT).sum())} are over {config.DIV_MAX_PCT:.0f}% of the price: "
               f"data problems, not payouts; shorts treat them like price breaks (engine_short.py).")
         big = table.loc[has].assign(div=div[has].round(4), yield_pct=yld.round(2))
-        print("Largest as % of the price (check one with python show_data.py SYMBOL --around DATE):")
+        print("Largest as % of the price (check one with python tools/show_data.py SYMBOL --around DATE):")
         print(big.sort_values("yield_pct", ascending=False).head(10)[["symbol", "date", "div", "yield_pct"]]
               .to_string(index=False))
 
     print("\nAlso check by hand: known 2008-era bankruptcies (e.g. Lehman, Washington Mutual)")
-    print("are present with their final prices: python show_data.py --find lehman")
+    print("are present with their final prices: python tools/show_data.py --find lehman")
 
 
 if __name__ == "__main__":

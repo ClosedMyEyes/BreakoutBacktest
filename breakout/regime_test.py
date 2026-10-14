@@ -31,20 +31,24 @@ Many candidates on one trade log will find something by luck. Pick one with a
 reason, then check it in walk-forward windows and the holdout.
 
 HOW TO RUN:
-  python setup_trend.py --family f3 --stop-mode structural --f0-seeds 0 --save-trades results/f3.csv
-  python regime_test.py --trades results/f3.csv
+  python breakout/setup_trend.py --family f3 --stop-mode structural --f0-seeds 0 --save-trades results/f3.csv
+  python breakout/regime_test.py --trades results/f3.csv
 """
 
 import argparse
 import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-import config
-import datastore
-import rules
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import datastore  # noqa: E402
+import rules  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--trades", required=True, help="Trade log from setup_trend.py --save-trades")

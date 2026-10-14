@@ -77,7 +77,7 @@ EXIT_DEFAULTS = {
 
 MISSING_DATA_HELP = (
     "The short side needs columns added after the last data build ({cols}). "
-    "Run python build_data.py, then python build_features.py, and try again.")
+    "Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
 
 
 def exit_columns(params):

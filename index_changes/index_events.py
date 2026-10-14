@@ -64,7 +64,7 @@ import pandas as pd
 
 # Kept in its own folder (a separate idea from the spike short); shares the
 # repo's data loading, so the repo root goes on the import path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core"))
 
 import config
 import datastore
@@ -317,7 +317,7 @@ def main():
         # Full history: the index a stock was in before --start still matters
         df = datastore.load_panel(cols, universe=args.universe, unlock_holdout=args.unlock_holdout)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
     codes = df["symbol"].cat.codes.to_numpy()
     spx = pd.read_parquet(config.MARKET_FILE, columns=["date", "spx_close"])

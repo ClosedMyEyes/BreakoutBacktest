@@ -5,19 +5,24 @@ Prints every feature for one ticker on one date so you can compare it with
 TradingView, or the bars around a trade from a saved trade log.
 
 HOW TO RUN:
-  python check_features.py AAPL 2015-06-01            # all features on that date
-  python check_features.py --random 5                 # 5 random symbol/dates
-  python check_features.py --trades results/trades_top1.csv --n 10
-                                                      # bars around 10 random trades
+  python tools/check_features.py AAPL 2015-06-01            # all features on that date
+  python tools/check_features.py --random 5                 # 5 random symbol/dates
+  python tools/check_features.py --trades results/trades_top1.csv --n 10
+                                                            # bars around 10 random trades
 """
 
 import argparse
+import os
+import sys
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-import config
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("symbol", nargs="?")

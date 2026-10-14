@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
 sys.path.insert(0, HERE)
 import account_report as ar  # noqa: E402
 

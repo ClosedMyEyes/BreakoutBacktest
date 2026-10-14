@@ -17,23 +17,28 @@ the big-winner rate (fwdmax60 >= 50%) and breakdowns by decade, regime,
 sector and size.
 
 HOW TO RUN:
-  python filter_test.py
-  python filter_test.py --min-rs 80 --trend-days 63 --max-below-high 15
-  python filter_test.py --breakdowns       # print the breakdown tables
+  python breakout/filter_test.py
+  python breakout/filter_test.py --min-rs 80 --trend-days 63 --max-below-high 15
+  python breakout/filter_test.py --breakdowns  # print the breakdown tables
 """
 
 import argparse
 import json
+import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-import config
-import datastore
-import rules
-from params import add_param_flags, add_run_flags, collect
-from reports import by_date_stats, spx_forward, tstat_overlap
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import datastore  # noqa: E402
+import rules  # noqa: E402
+from params import add_param_flags, add_run_flags, collect  # noqa: E402
+from reports import by_date_stats, spx_forward, tstat_overlap  # noqa: E402
 
 parser = argparse.ArgumentParser()
 add_param_flags(parser, ["universe", "template"])
