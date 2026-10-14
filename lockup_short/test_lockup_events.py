@@ -213,3 +213,24 @@ def test_select_events_judges_the_universe_at_the_given_day():
     at20, *_ = le.select_events(df, codes, P, 180, pd.Timestamp("2010-01-01"), "drop", None, None)
     at40, *_ = le.select_events(df, codes, P, 180, pd.Timestamp("2010-01-01"), "drop", None, None, uday=-40)
     assert len(at20) == 1 and len(at40) == 0
+
+
+def test_path_tracks_the_open_profit_and_how_far_it_went_against():
+    df, codes = panel(toy("WIN", "2011-03-01", np.full(200, 20.0)), toy("LOS", "2011-03-01", np.full(200, 20.0)))
+    df["low"] = df["close"]
+    ev, _ = le.find_events(df, codes, 180, pd.Timestamp("2010-01-01"))
+    ev = ev.sort_values("symbol").reset_index(drop=True)          # LOS, WIN
+    rl, rw = ev["row"].to_numpy()
+    df.loc[rw - 4, "high"] = 24.0                                   # WIN: 20% against on day -4,
+    df.loc[rw - 3:rw + 5, ["close", "low", "high"]] = 18.0          # then 10% down from day -3
+    df.loc[rl - 3:rl + 5, ["close", "low", "high"]] = 22.0          # LOS: 10% up from day -3
+    spx = spx_flat(df)
+    ev = pd.concat([ev, pd.DataFrame(le.window(ev, df, spx, -5, 5, 0.0))], axis=1)
+    by_day, by_outcome = le.path(ev, df, spx, -5, 5)
+    assert list(by_day["day"]) == [0, 5]
+    assert np.allclose(by_day["avg"], 0.0) and np.allclose(by_day["p75"], 5.0)
+    assert np.allclose(by_day["ahead_%"], 50.0)
+    o = by_outcome.set_index("group")
+    assert np.isclose(o.loc["winners", "med_against"], 20.0) and o.loc["winners", "against15_%"] == 100
+    assert o.loc["winners", "against25_%"] == 0 and np.isclose(o.loc["winners", "med_best"], 10.0)
+    assert np.isclose(o.loc["losers", "med_against"], 10.0)
