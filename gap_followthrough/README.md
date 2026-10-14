@@ -1,5 +1,8 @@
 # Big-gap follow-through
 
+**Status: parked (2026-10-14).** No edge on Dev in either direction, and none of the lead-up filters
+turned it around (see "Second Dev run" below). The holdout was never used.
+
 Idea #4 from the project's `ideas/next_setups.md`. A liquid stock that opens 5%+ away from the prior close
 on 3x+ its usual volume has nearly always had news, usually earnings. Prices drifting on in the direction
 of an earnings surprise is one of the oldest documented edges, but it is reported to have shrunk in large
@@ -48,6 +51,25 @@ only known at the close. Two tables were added, both read as context since the p
   with no edge, so a bucket is worth a follow-up only if it turns the sign and holds in every 5-year block.
   `--only move20:0:10` (any lead-up column, lower bound included, upper left out) reruns everything on one
   bucket, which shows it by block and by year.
+
+## Second Dev run: lead-up and day 0 from the open
+
+- **Lead-up:** no group made buying up gaps beat the S&P. The best was up gaps within 2% of the 52-week
+  high: +0.89% a trade, +0.38% hedged (t 0.65). Gaps in weak stocks were worst: 25%+ below the 52-week
+  high lost 1.42% hedged (t -3.1). On the down side the strongest groups were bounces. Stocks already down
+  20%+ in the 20-30 days before a down gap rose afterwards, and the short lost 5.7-5.9% a trade (hedged t
+  -2.2 to -2.7). That is the capitulation buy the crash rebound study tested, where it came mostly from
+  March 2020 and 2022.
+- **Day 0 from the open:**
+
+  | In at the day 0 open, out at its close, after costs | Up gaps (buy) | Down gaps (short) |
+  |---|---|---|
+  | Every 5%+ gap, known at the open | -0.55% (t -6.6) | -0.62% (t -2.9) |
+  | Only the 3x-volume gaps, known at the close | +0.68% (t 6.8) | +0.99% (t 6.4) |
+
+  The gaps that keep going are the ones that end the day on heavy volume, so the 3x row can't be traded
+  from the open. Catching it would need intraday volume (the first few minutes), which the daily data
+  doesn't have.
 
 Lessons carried over from the earlier studies: short-term edges shrank a lot after 2010 (reversion,
 breakouts), a 3-day crash of 30%+ kept falling (crash short, so the down-gap side may overlap it), and
