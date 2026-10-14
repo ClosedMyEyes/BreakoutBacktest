@@ -56,11 +56,19 @@ HOW TO RUN:
   python lockup_short/lockup_events.py --start 2010-01-01 --min-price 1 --liq-top-pct 100   # small caps too
   python lockup_short/lockup_events.py --start 2010-01-01 --pick=-20:10 --min-dv 20        # liquid names only
   python lockup_short/lockup_events.py --start 2010-01-01 --pick=-20:10 --min-dv 20 --market above200 --refine
+  python lockup_short/lockup_events.py --start 2010-01-01 --frozen
+  python lockup_short/lockup_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout   # once
 
 The pick's table splits it by size and liquidity at the day -20 close (price, 50-day
 dollar volume, dollar volume in the listing month as a stand-in for size at the IPO;
 the data has no market caps), by the move since listing, and by volume around day 0
 after the fact, next to the wider windows -20:0, 0:20 and -20:20.
+
+THE FROZEN RULE (2026-10-14, before its one holdout run): --frozen = --pick=-20:10
+--min-dv 20 --market above200 --days 180. Short new listings trading $20M+ a day at
+the close 20 trading days before the 180-day date, only while the S&P is above its
+200-day, cover at the close 10 trading days after, no stop. The run ends with the
+worst trades, losses by year and an account test (--sizes, % of the account a short).
 
 --refine prints only the tables for settling on one rule: earlier entries (day -60
 to -5), the $ volume cut, the S&P at the entry, stops, how the gain builds from
@@ -122,6 +130,9 @@ STOPS = [0, 40, 25, 15, 10]                               # % above the entry cl
 PATH_EVERY = 5                                            # path checkpoints every 5 trading days
 AGAINST = [10, 15, 25]                                    # % the stock rose above the entry first
 WORST = 10                                                # worst trades listed to check on a chart
+# Frozen on 2026-10-14 on Dev, before its one holdout run (README "Frozen rule"); --frozen applies it
+FROZEN = {"pick": "-20:10", "min_dv": 20.0, "market": "above200", "days": 180}
+SIZES = "5,10"                                            # account test: each short is X% of the account
 
 
 def parse_pick(spec):
@@ -663,6 +674,65 @@ def path(ev, df, spx, a, b):
     return pd.DataFrame(rows), pd.DataFrame(out)
 
 
+def account(g, df, spx, a, b, size_pct, borrow_pct):
+    """The a:b short through an account that starts at 1.0. Each short is size_pct% of
+    the account when it opens at the close of day a, and is marked at every close until
+    the cover (half the round trip at each end, borrow as it accrues, so the cover
+    matches short_a:b). Returns (daily frame with date / equity / open / short_% (the
+    open shorts' value as % of the account), trades left out because a date is not on
+    the S&P calendar)."""
+    name = f"{a}:{b}"
+    g = g[g[f"short_{name}"].notna()]
+    c = df["close"].to_numpy(np.float64)
+    dpos = spx.index.get_indexer(pd.DatetimeIndex(df["date"].to_numpy()))
+    r, last, final = g["row"].to_numpy(), g["last"].to_numpy(), g[f"short_{name}"].to_numpy()
+    i, j = r + a, np.minimum(r + b, last)
+    on = (dpos[i] >= 0) & (dpos[j] >= 0)
+    if not on.any():
+        return pd.DataFrame(columns=["date", "equity", "open", "short_%"]), int((~on).sum())
+    lo, hi = dpos[i][on].min(), dpos[j][on].max()
+    n = hi - lo + 1
+    pnl, n_open, value = np.zeros(n), np.zeros(n), np.zeros(n)
+    cost = ce.round_trip_cost()
+    for k in np.flatnonzero(on)[np.argsort(dpos[i][on], kind="stable")]:
+        rows = np.arange(i[k], j[k] + 1)
+        t = dpos[rows]
+        rows, t = rows[t >= 0], t[t >= 0] - lo
+        move = c[rows] / c[i[k]] - 1
+        path = -move * 100 - cost / 2 - borrow_pct * (rows - i[k]) / 252
+        path[-1] = final[k]
+        size = size_pct / 100 * (1 + pnl[t[0]])         # % of the account when it opens
+        span = np.full(t[-1] - t[0] + 1, np.nan)
+        span[t - t[0]], held = path, np.full(t[-1] - t[0] + 1, np.nan)
+        held[t - t[0]] = 1 + move
+        span, held = pd.Series(span).ffill().to_numpy(), pd.Series(held).ffill().to_numpy()
+        pnl[t[0]:t[-1] + 1] += size * span / 100
+        pnl[t[-1] + 1:] += size * path[-1] / 100
+        n_open[t[0]:t[-1]] += 1
+        value[t[0]:t[-1]] += size * held[:-1]
+    eq = 1 + pnl
+    curve = pd.DataFrame({"date": spx.index[lo:hi + 1], "equity": eq, "open": n_open,
+                          "short_%": value / eq * 100})
+    return curve, int((~on).sum())
+
+
+def account_summary(curve, size_pct):
+    """Growth, the worst drop from a high and the years, for one account curve."""
+    eq = curve["equity"].to_numpy()
+    peak = np.maximum.accumulate(eq)
+    k = int(np.argmin(eq / peak))
+    top = int(np.argmax(eq[:k + 1])) if k else 0
+    years = max((curve["date"].iloc[-1] - curve["date"].iloc[0]).days / 365.25, 0.1)
+    end = curve.set_index("date")["equity"]
+    end = end.groupby(end.index.year).last()
+    yr = (end / end.shift(1).fillna(1.0) - 1) * 100
+    return {"size_%": size_pct, "x_start": eq[-1], "cagr_%": (eq[-1] ** (1 / years) - 1) * 100,
+            "max_dd_%": (eq[k] / peak[k] - 1) * 100, "dd_from": curve["date"].iloc[top].date(),
+            "dd_low": curve["date"].iloc[k].date(), "worst_year_%": yr.min(),
+            "years_up": f"{int((yr > 0).sum())}/{len(yr)}", "max_open": int(curve["open"].max()),
+            "avg_open": curve["open"].mean(), "max_short_%": curve["short_%"].max()}, yr
+
+
 def years_up(g, col):
     """'11/17': years whose average col is above 0, out of the years with trades."""
     y = g.groupby(g["date"].dt.year)[col].mean().dropna()
@@ -834,11 +904,18 @@ def main():
     parser.add_argument("--borrow-pct", type=float, default=5.0, help="Borrow fee, %% a year")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
     parser.add_argument("--save-events", type=str, default=None, help="Write every event to this CSV")
+    parser.add_argument("--frozen", action="store_true",
+                        help=f"The frozen rule: --pick={FROZEN['pick']} --min-dv {FROZEN['min_dv']:g} "
+                             f"--market {FROZEN['market']} --days {FROZEN['days']} (overrides those flags)")
+    parser.add_argument("--sizes", type=str, default=SIZES,
+                        help="Account test: each short is this %% of the account (default 5,10)")
     parser.add_argument("--refine", action="store_true",
                         help="Only the tuning tables for the pick: earlier entries, $ volume cuts, market, stops, "
                              "the path, worst trades")
     parser.add_argument("--no-log", action="store_true", help="Don't add a row to the research log")
     args = parser.parse_args()
+    if args.frozen:
+        args.pick, args.min_dv, args.market, args.days = (FROZEN[k] for k in ["pick", "min_dv", "market", "days"])
     P = collect(args, ["universe"])
     pa_, pb = parse_pick(args.pick)
     uday = min(UNIVERSE_DAY, pa_)     # an entry before day -20 is judged at its own close
@@ -966,6 +1043,48 @@ def main():
     print(yr.round(2).to_string(index=False))
     up = int((yr["short"] > 0).sum())
     print(f"Short positive in {up} of {len(yr)} years; hedged positive in {int((yr['hedged'] > 0).sum())}.")
+
+    sizes = [float(x) for x in args.sizes.split(",") if x.strip()]
+    summary, yrs, skipped = [], {}, 0
+    for size in sizes:
+        curve, skipped = account(pick, df, spx, pa_, pb, size, args.borrow_pct)
+        if curve.empty:
+            continue
+        row, ret = account_summary(curve, size)
+        summary.append(row)
+        yrs[f"account_{size:g}%"] = ret
+    col = f"short_{name}"
+    dates = df["date"].to_numpy()
+    worst = pick.nsmallest(5, col)
+    print(f"\nLOSSES AND DRAWDOWN. The 5 worst trades (short = % of the position after costs; peak_% = the "
+          f"highest high above the entry before the cover):")
+    r = worst["row"].to_numpy()
+    top = [np.nanmax(df["high"].to_numpy(np.float64)[i + 1:j + 1]) / df["close"].to_numpy(np.float64)[i] * 100 - 100
+           for i, j in zip(r + pa_, np.minimum(r + pb, worst["last"].to_numpy()))]
+    print(pd.DataFrame({"symbol": worst["symbol"].to_numpy(),
+                        "short_day": pd.to_datetime(dates[r + pa_]).strftime("%Y-%m-%d"),
+                        "cover_day": pd.to_datetime(dates[np.minimum(r + pb, worst["last"].to_numpy())]).strftime("%Y-%m-%d"),
+                        "short": worst[col].to_numpy(), "peak_%": top}).round(2).to_string(index=False))
+    rows = []
+    for y, g in pick.groupby(pick["date"].dt.year):
+        x = g[col]
+        w = g.loc[x.idxmin()]
+        rows.append({"year": y, "trades": len(g), "short": x.mean(), "losers": int((x <= 0).sum()),
+                     "lost_%_sum": x[x <= 0].sum(), "worst": f"{w['symbol']} {w[col]:.1f}",
+                     "2nd_worst": f"{x.nsmallest(2).iloc[-1]:.1f}" if len(x) > 1 else ""})
+    by_year = pd.DataFrame(rows).set_index("year")
+    for k, v in yrs.items():
+        by_year[k] = v.reindex(by_year.index)
+    print(f"\nBy year (day 0's year): losers = losing trades, lost_%_sum = their losses added up (% of one "
+          f"position), worst = the year's worst trade. account_X% = the account's return that calendar year with "
+          f"each short X% of the account when it opens, marked at every close.")
+    print(by_year.round(2).to_string())
+    if summary:
+        print(f"\nThe account: x_start = end balance / start; max_dd = the worst drop from a high, marked at every "
+              f"close (dd_from = the high, dd_low = the bottom); max_open / avg_open = shorts open at once; "
+              f"max_short_% = the open shorts' value as % of the account at most. No cap on shorts open"
+              + (f"; {skipped} trades off the S&P calendar left out." if skipped else "."))
+        print(pd.DataFrame(summary).round(2).to_string(index=False))
 
     if args.sample:
         s = pick.sample(min(args.sample, len(pick)), random_state=0).sort_values("date")

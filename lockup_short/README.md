@@ -22,6 +22,8 @@ python lockup_short/lockup_events.py --start 2010-01-01
 python lockup_short/lockup_events.py --start 2010-01-01 --days 90
 python lockup_short/lockup_events.py --start 2010-01-01 --pick=-3:1 --sample 10
 python lockup_short/lockup_events.py --start 2010-01-01 --pick=-20:10 --min-dv 20 --market above200 --refine
+python lockup_short/lockup_events.py --start 2010-01-01 --frozen
+python lockup_short/lockup_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout
 python -m pytest lockup_short
 ```
 
@@ -39,3 +41,22 @@ not), stops at 10/15/25/40% above the entry, how the gain builds day by day from
 bleed or a few big drops, and how far winners went against the short first), and the 10 worst trades to
 check on a chart. Each row is
 judged at the entry close, so an entry before day -20 (`--pick=-40:10`) moves the universe check there.
+
+## Frozen rule
+
+Frozen on 2026-10-14 on the Dev half, before its one run on the locked half (`--frozen`):
+
+- **Stocks:** new listings (first bar, not a relist or a SPAC-like start) trading $20M+ a day (50-day
+  average), $5+, in the top 80% by dollar volume, at the close 20 trading days before day 0.
+- **Day 0:** the first trading day 180 calendar days after the first bar.
+- **Market:** only while the S&P 500 is above its 200-day at that close.
+- **Trade:** short at that close (day -20), cover at the close of day +10, no stop.
+
+Dev since 2010: 242 trades (14.6 a year), +5.00% a trade after costs and 5%/yr borrow (t 2.89), +6.13%
+hedged with the S&P (t 3.85), 12 of 17 years up. Every stop tried (10-40%) made it worse, and the gain
+grew smoothly with dollar volume. Pass bar on the locked half, set before it runs: the short clearly above
+0 after costs, month-clustered t above 2, and positive in more than half the years.
+
+The full run ends with the 5 worst trades, losses and the account's return by year, and an account test
+(`--sizes 5,10`: each short is that % of the account when it opens, marked at every close) with the worst
+drop from a high.
