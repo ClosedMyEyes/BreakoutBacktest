@@ -234,3 +234,21 @@ def test_path_tracks_the_open_profit_and_how_far_it_went_against():
     assert np.isclose(o.loc["winners", "med_against"], 20.0) and o.loc["winners", "against15_%"] == 100
     assert o.loc["winners", "against25_%"] == 0 and np.isclose(o.loc["winners", "med_best"], 10.0)
     assert np.isclose(o.loc["losers", "med_against"], 10.0)
+
+
+def test_account_marks_open_shorts_and_ends_at_the_trades_result():
+    df, codes = panel(toy("IPO", "2011-03-01", np.full(200, 20.0)))
+    ev, _ = le.find_events(df, codes, 180, pd.Timestamp("2010-01-01"))
+    r = ev["row"].iloc[0]
+    df.loc[r, "close"] = 24.0                                       # squeezed 20% on day 0
+    df.loc[r + 1:, "close"] = 18.0                                  # then 10% below the entry
+    df["high"] = df["close"]
+    spx = spx_flat(df)
+    ev = pd.concat([ev, pd.DataFrame(le.window(ev, df, spx, -5, 5, 5.0))], axis=1)
+    curve, skipped = le.account(ev, df, spx, -5, 5, 10.0, 5.0)
+    assert skipped == 0 and len(curve) == 11
+    assert np.isclose(curve["equity"].iloc[-1], 1 + 0.1 * ev["short_-5:5"].iloc[0] / 100)
+    assert curve["open"].max() == 1 and curve["open"].iloc[-1] == 0
+    row, years = le.account_summary(curve, 10.0)
+    assert -2.2 < row["max_dd_%"] < -2.0                            # 10% of the account down 20%
+    assert np.isclose(curve["short_%"].iloc[5], 10 * 1.2 / curve["equity"].iloc[5])
