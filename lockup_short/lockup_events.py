@@ -55,11 +55,17 @@ HOW TO RUN:
   python lockup_short/lockup_events.py --start 2010-01-01 --spacs keep
   python lockup_short/lockup_events.py --start 2010-01-01 --min-price 1 --liq-top-pct 100   # small caps too
   python lockup_short/lockup_events.py --start 2010-01-01 --pick=-20:10 --min-dv 20        # liquid names only
+  python lockup_short/lockup_events.py --start 2010-01-01 --pick=-20:10 --min-dv 20 --market above200 --refine
 
 The pick's table splits it by size and liquidity at the day -20 close (price, 50-day
 dollar volume, dollar volume in the listing month as a stand-in for size at the IPO;
 the data has no market caps), by the move since listing, and by volume around day 0
 after the fact, next to the wider windows -20:0, 0:20 and -20:20.
+
+--refine prints only the tables for settling on one rule: earlier entries (day -60
+to -5), the $ volume cut, the S&P at the entry, stops, how the gain builds from
+entry to cover, and the worst trades. An entry
+before day -20 moves the universe check to the entry close.
 
 DOES THE DATE MATTER? repeats the main windows with day 0 at 90 to 365 days after
 the first bar. A lock-up effect should stand out at 180 (and 90); the same drift
@@ -109,6 +115,13 @@ DATA_START_GRACE = 30                # first bar this close to the data start = 
 SPAC_BARS, SPAC_LO, SPAC_HI, SPAC_SHARE = 20, 9.5, 10.5, 0.9
 HARD_BORROW = 100.0
 SQUEEZE = 0.25
+# --refine: tables for tuning one rule before the holdout
+DRIFT_ENTRIES = [-60, -50, -40, -30, -20, -15, -10, -5]   # when does the drift start?
+DV_CUTS = [0, 5, 10, 20, 50, 100]                         # $M a day, 50-day average at the entry
+STOPS = [0, 40, 25, 15, 10]                               # % above the entry close (0 = no stop)
+PATH_EVERY = 5                                            # path checkpoints every 5 trading days
+AGAINST = [10, 15, 25]                                    # % the stock rose above the entry first
+WORST = 10                                                # worst trades listed to check on a chart
 
 
 def parse_pick(spec):
@@ -214,6 +227,57 @@ def window(ev, df, spx, a, b, borrow_pct):
     hit = top / c[i] - 1 >= SQUEEZE
     out[f"hit_{name}"] = np.where(bad, np.nan, hit.astype(float))
     return out
+
+
+def stopped(ev, df, spx, a, b, stop_pct, borrow_pct):
+    """The a:b short with a stop: covered on the first day whose high is stop_pct% or
+    more above the entry close, at that price (or at the open when it opened above it).
+    stop_pct 0 = no stop, the same as window(). Columns named a:b/stop_pct as in
+    window(), plus out_ (1 if stopped out), peak_ (highest high before the cover, % above
+    the entry) and end_ (1 if the stock stopped trading before day b: bought out or
+    delisted). Same trades as window(): a window across a downward break is left out."""
+    c = df["close"].to_numpy(np.float64)
+    o = df["open"].to_numpy(np.float64)
+    h = df["high"].to_numpy(np.float64)
+    cdn = np.cumsum((df["bad_bar_dn"].fillna(0) > 0).to_numpy())
+    dates = df["date"].to_numpy()
+    r, first, last = ev["row"].to_numpy(), ev["first"].to_numpy(), ev["last"].to_numpy()
+    i, j = r + a, np.minimum(r + b, last)
+    ok = (i >= first) & (i <= last) & (j > i)
+    i, j = np.where(ok, i, r), np.where(ok, j, r)
+    entry = c[i]
+    level = entry * (1 + stop_pct / 100) if stop_pct > 0 else np.full(len(r), np.inf)
+    out_row, out_px = j.copy(), c[j].copy()
+    done = np.zeros(len(r), dtype=bool)
+    peak = np.full(len(r), np.nan)
+    for k in range(1, max(b - a, 1) + 1):
+        jj = np.minimum(i + k, last)
+        live = (i + k <= j) & ~done
+        peak = np.where(live, np.fmax(peak, h[jj]), peak)
+        hit = live & (h[jj] >= level)
+        px = np.where(np.isfinite(o[jj]), np.maximum(o[jj], level), level)
+        out_row, out_px = np.where(hit, jj, out_row), np.where(hit, px, out_px)
+        done |= hit
+    raw = out_px / entry - 1
+    pos = spx.index.get_indexer(pd.DatetimeIndex(dates))
+    sc = spx.to_numpy()
+    pi, pj = pos[i], pos[out_row]
+    sp = np.where((pi >= 0) & (pj >= 0), sc[np.maximum(pj, 0)] / sc[np.maximum(pi, 0)] - 1, np.nan)
+    bad = ~ok | (cdn[j] - cdn[i] > 0)
+    raw[bad] = np.nan
+    days_held = np.maximum(out_row - i, 1)
+    cost = ce.round_trip_cost()
+    peak = (peak / entry - 1) * 100
+    name = f"{a}:{b}/{stop_pct:g}"
+    nan_if_bad = lambda x: np.where(bad, np.nan, x)
+    return {f"raw_{name}": raw * 100,
+            f"short_{name}": -raw * 100 - cost - borrow_pct * days_held / 252,
+            f"hedged_{name}": -(raw - sp) * 100 - cost - borrow_pct * days_held / 252,
+            f"b100_{name}": -raw * 100 - cost - HARD_BORROW * days_held / 252,
+            f"hit_{name}": nan_if_bad((peak >= SQUEEZE * 100).astype(float)),
+            f"out_{name}": nan_if_bad(done.astype(float)),
+            f"peak_{name}": nan_if_bad(peak),
+            f"end_{name}": nan_if_bad((r + b > last).astype(float))}
 
 
 def profile(ev, df, spx):
@@ -396,10 +460,11 @@ def fill_young_liquidity(df, rows, first):
     return dv_pct
 
 
-def select_events(df, codes, P, days, data_start, spacs, start, end, keep_market=None, min_dv=0.0):
+def select_events(df, codes, P, days, data_start, spacs, start, end, keep_market=None, min_dv=0.0,
+                  uday=UNIVERSE_DAY):
     """Events for one lock-up length, inside the dates and passing the universe at
-    the day UNIVERSE_DAY close (and, with min_dv, a 50-day dollar volume of at least
-    min_dv $M a day there). Returns (events, left-out counts, found, inside dates)."""
+    the day uday close (and, with min_dv, a 50-day dollar volume of at least min_dv $M
+    a day there). Returns (events, left-out counts, found, inside dates)."""
     ev, left = find_events(df, codes, days, data_start, spacs)
     n_found = len(ev)
     if start:
@@ -408,7 +473,7 @@ def select_events(df, codes, P, days, data_start, spacs, start, end, keep_market
         ev = ev[ev["date"] <= pd.Timestamp(end)]
     ev = ev.reset_index(drop=True)
     n_dates = len(ev)
-    u = ev["row"].to_numpy() + UNIVERSE_DAY
+    u = ev["row"].to_numpy() + uday
     inside = u >= ev["first"].to_numpy()
     u, f = np.where(inside, u, ev["row"].to_numpy()), ev["first"].to_numpy()
     d = df.iloc[np.unique(u)].copy() if len(u) else df.iloc[:0].copy()
@@ -555,6 +620,200 @@ def size_table(g, name, years):
     return pd.DataFrame(rows)
 
 
+def path(ev, df, spx, a, b):
+    """How the a:b short's gain builds, for trades with a result (no downward break).
+    Returns (by_day, by_outcome). by_day: the open profit before costs at checkpoints
+    from entry to cover (a stock that stopped trading stays at its last close). by_outcome:
+    for winners and losers after costs, how far the stock went against the short first."""
+    name = f"{a}:{b}"
+    g = ev[ev[f"short_{name}"].notna()]
+    c = df["close"].to_numpy(np.float64)
+    h = df["high"].to_numpy(np.float64)
+    lo = df["low"].to_numpy(np.float64)
+    pos = spx.index.get_indexer(pd.DatetimeIndex(df["date"].to_numpy()))
+    sc = spx.to_numpy()
+    r, last = g["row"].to_numpy(), g["last"].to_numpy()
+    i, j = r + a, np.minimum(r + b, last)
+    days = sorted(set(range(a + PATH_EVERY, b, PATH_EVERY)) | ({0} if a < 0 < b else set()) | {b})
+    rows = []
+    for d in days:
+        k = np.minimum(r + d, last)
+        pnl = -(c[k] / c[i] - 1) * 100
+        pi, pk = pos[i], pos[k]
+        sp = np.where((pi >= 0) & (pk >= 0), sc[np.maximum(pk, 0)] / sc[np.maximum(pi, 0)] - 1, np.nan) * 100
+        rows.append({"day": d, "held": d - a, "avg": pnl.mean(), "med": np.median(pnl),
+                     "p25": np.percentile(pnl, 25), "p75": np.percentile(pnl, 75),
+                     "ahead_%": (pnl > 0).mean() * 100, "avg_hedged": np.nanmean(pnl + sp)})
+    against, best = np.full(len(r), np.nan), np.full(len(r), np.nan)
+    for n in range(len(r)):
+        if j[n] > i[n]:
+            against[n] = (np.nanmax(h[i[n] + 1:j[n] + 1]) / c[i[n]] - 1) * 100
+            best[n] = (1 - np.nanmin(lo[i[n] + 1:j[n] + 1]) / c[i[n]]) * 100
+    won = (g[f"short_{name}"] > 0).to_numpy()
+    out = []
+    for label, m in [("all", np.ones(len(g), dtype=bool)), ("winners", won), ("losers", ~won)]:
+        if not m.any():
+            continue
+        row = {"trades": int(m.sum()), "group": label, "avg_short": g[f"short_{name}"].to_numpy()[m].mean(),
+               "med_against": np.nanmedian(against[m])}
+        for x in AGAINST:
+            row[f"against{x}_%"] = (against[m] >= x).mean() * 100
+        row["med_best"] = np.nanmedian(best[m])
+        out.append(row)
+    return pd.DataFrame(rows), pd.DataFrame(out)
+
+
+def years_up(g, col):
+    """'11/17': years whose average col is above 0, out of the years with trades."""
+    y = g.groupby(g["date"].dt.year)[col].mean().dropna()
+    return f"{int((y > 0).sum())}/{len(y)}"
+
+
+def by_block(g, col):
+    """Average col in each 5-year block, as {block: value}."""
+    return g.groupby(ce.block_of(g["date"]))[col].mean().to_dict()
+
+
+def refine(df, codes, spx, market, P, args, data_start, keep_market, pa_, pb, uday):
+    """--refine: tables for settling on one rule before the holdout. Each row is a rule
+    you could trade (the universe and $ volume judged at the entry close). Prints them
+    and returns the number of rows (tries)."""
+    pick = f"{pa_}:{pb}"
+    show = ["events", "per_yr", "short", "hedged", "t", "t_hedged", "win_%", "worst5%", "hit25_%"]
+    tried = 0
+
+    def sel(at, min_dv):
+        ev, _, _, _ = select_events(df, codes, P, args.days, data_start, args.spacs, args.start, args.end,
+                                    keep_market, min_dv, uday=at)
+        return ev
+
+    def with_windows(ev, wins):
+        cols = {}
+        for a, b in wins:
+            cols.update(window(ev, df, spx, a, b, args.borrow_pct))
+        return pd.concat([ev, pd.DataFrame(cols)], axis=1)
+
+    # 1. When does the drift start?
+    covers = sorted({0, pb})
+    rows = []
+    for e in sorted(set(DRIFT_ENTRIES + [pa_])):
+        wins = [(e, b) for b in covers if b > e]
+        if not wins:
+            continue
+        g = with_windows(sel(e, args.min_dv), wins)
+        row = {"short_at": e, "events": len(g), "per_yr": len(g) / ce.span_years(g["date"])}
+        for a, b in wins:
+            st = stats(g, f"{a}:{b}", 1.0) if len(g) else {}
+            row[f"short_{b}"], row[f"hedged_{b}"], row[f"t_hed_{b}"] = (st.get(k, np.nan) for k in
+                                                                         ["short", "hedged", "t_hedged"])
+            if b == pb:
+                row[f"win_{b}"], row[f"worst5_{b}"], row[f"hit25_{b}"] = (st.get(k, np.nan) for k in
+                                                                           ["win_%", "worst5%", "hit25_%"])
+        rows.append(row)
+        tried += len(wins)
+    print(f"\n1. WHEN DOES THE DRIFT START? Short at the close of day short_at, cover at the close of day 0 "
+          f"(_0) or day {pb:+d} (_{pb}). The universe and the $ volume cut are judged at the entry close, so "
+          f"each row is a rule you could trade. If earlier entries keep adding, the selling starts before day -20.")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    # 2. How liquid?
+    early = [(pa_, 0)] if pa_ < 0 < pb else []
+    rows = []
+    for cut in sorted(set(DV_CUTS + [args.min_dv])):
+        g = with_windows(sel(uday, cut), [(pa_, pb)] + early)
+        st = stats(g, pick, ce.span_years(g["date"])) if len(g) else {"events": 0}
+        row = {"min_dv": cut, **{k: st.get(k, np.nan) for k in show}}
+        for a, b in early:
+            row[f"short_{a}:{b}"] = g[f"short_{a}:{b}"].mean() if len(g) else np.nan
+            row[f"hedged_{a}:{b}"] = g[f"hedged_{a}:{b}"].mean() if len(g) else np.nan
+        rows.append(row)
+        tried += 1
+    print(f"\n2. HOW LIQUID? The pick ({pick}) with the 50-day $ volume at the day {uday} close at least "
+          f"min_dv $M a day (0 = the universe only). A real effect should grow or hold steady as the cut "
+          f"rises, not jump at one value.")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    # The rest use the run's own sample (--min-dv)
+    g = with_windows(sel(uday, args.min_dv), [(pa_, pb)])
+    if g.empty:
+        return tried
+    years = ce.span_years(g["date"])
+    dates = df["date"].to_numpy()
+    at = pd.DatetimeIndex(dates[np.minimum(g["row"].to_numpy() + pa_, g["last"].to_numpy())])
+    m = market.set_index("date")
+    above200 = m["spx_above200"].reindex(at).to_numpy() == 1
+    uptrend = above200 & (m["spx_above50"].reindex(at).to_numpy() == 1) \
+        & (m["spx_sma50_rising"].reindex(at).to_numpy() == 1)
+    blocks = sorted(set(ce.block_of(g["date"])))
+
+    def rule_row(label, sub, name):
+        st = stats(sub, name, years) if len(sub) else {"events": 0}
+        row = {"rule": label, **{k: st.get(k, np.nan) for k in show}}
+        if len(sub):
+            row["yrs_up"] = years_up(sub, f"short_{name}")
+            bb = by_block(sub, f"short_{name}")
+            for blk in blocks:
+                row[blk] = bb.get(blk, np.nan)
+        return row
+
+    # 3. Market at the entry
+    rows = [rule_row(label, g[mask], pick) for label, mask in
+            [("all", np.ones(len(g), dtype=bool)),
+             ("S&P above its 200-day", above200), ("S&P below its 200-day", ~above200),
+             ("S&P uptrend (also above a rising 50-day)", uptrend), ("no uptrend", ~uptrend)] if mask.any()]
+    tried += 4
+    print(f"\n3. MARKET AT THE ENTRY (the S&P at the day {pa_} close). yrs_up = years whose average short "
+          f"is above 0; the block columns are the average short in each 5-year block.")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    # 4. Stops
+    rows = []
+    for stop in STOPS:
+        name = f"{pick}/{stop:g}"
+        sub = pd.concat([g, pd.DataFrame(stopped(g, df, spx, pa_, pb, stop, args.borrow_pct))], axis=1)
+        row = rule_row("none" if stop == 0 else f"+{stop:g}%", sub, name)
+        row.pop("hit25_%", None)     # a stop caps the squeeze; stopped_% replaces it
+        row["stopped_%"] = sub[f"out_{name}"].mean() * 100
+        rows.append(row)
+        if stop == 0:
+            base = sub
+    tried += len(STOPS) - 1
+    print(f"\n4. STOPS: cover the pick when the day's high reaches the stop above the entry close, at the stop "
+          f"(or the open, when it opened above it). A stop helps only if the squeezes keep going; it hurts "
+          f"when they fall back before the cover. stopped_% = share stopped out.")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    # 5. The path
+    by_day, by_outcome = path(base, df, spx, pa_, pb)
+    print(f"\n5. HOW THE GAIN BUILDS: a steady bleed or a few big drops? The short's open profit before costs "
+          f"(%, + = the stock is below the entry) on each day from entry to cover: avg, med, the 25th and 75th "
+          f"percentile, ahead_% = share of shorts in profit. A steady bleed shows med falling step by step with "
+          f"p25 and p75 close together; a few big drops show avg well above med and a wide p25-p75 gap.")
+    print(by_day.round(2).to_string(index=False))
+    print(f"\n   How far the stock went against the short before the cover (med_against = median highest high "
+          f"above the entry, %; againstX_% = share that were X%+ above it at some point; med_best = median "
+          f"lowest low below the entry). If winners rarely go far against first, a stop costs little.")
+    print(by_outcome.round(2).to_string(index=False))
+
+    # 6. Worst trades
+    name = f"{pick}/0"
+    w = base[base[f"short_{name}"].notna()].nsmallest(WORST, f"short_{name}")
+    r = w["row"].to_numpy()
+    out = pd.DataFrame({"symbol": w["symbol"].to_numpy(), "listed_on": w["listed_on"].to_numpy(),
+                        "short_day": dates[r + pa_], "cover_day": dates[np.minimum(r + pb, w["last"].to_numpy())],
+                        "entry_$": df["unadj_close"].to_numpy(np.float64)[r + pa_],
+                        "stock_%": w[f"raw_{name}"].to_numpy(), "short": w[f"short_{name}"].to_numpy(),
+                        "peak_%": w[f"peak_{name}"].to_numpy(),
+                        "ended_early": w[f"end_{name}"].to_numpy() == 1})
+    print(f"\n6. THE {len(out)} WORST TRADES of the pick, to check on a chart: a buyout, a bad price or a real "
+          f"squeeze? stock_% = the stock's move from entry to cover; peak_% = its highest high above the entry; "
+          f"ended_early = stopped trading before the cover (often a buyout).")
+    for c in ["listed_on", "short_day", "cover_day"]:
+        out[c] = pd.to_datetime(out[c]).dt.strftime("%Y-%m-%d")
+    print(out.round(2).to_string(index=False))
+    return tried
+
+
 def main():
     parser = argparse.ArgumentParser()
     add_param_flags(parser, ["universe"])
@@ -575,10 +834,14 @@ def main():
     parser.add_argument("--borrow-pct", type=float, default=5.0, help="Borrow fee, %% a year")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
     parser.add_argument("--save-events", type=str, default=None, help="Write every event to this CSV")
+    parser.add_argument("--refine", action="store_true",
+                        help="Only the tuning tables for the pick: earlier entries, $ volume cuts, market, stops, "
+                             "the path, worst trades")
     parser.add_argument("--no-log", action="store_true", help="Don't add a row to the research log")
     args = parser.parse_args()
     P = collect(args, ["universe"])
     pa_, pb = parse_pick(args.pick)
+    uday = min(UNIVERSE_DAY, pa_)     # an entry before day -20 is judged at its own close
 
     t0 = time.time()
     cols = (rules.universe_columns(P) + ["open", "high", "low", "close", "volume", "turnover", "dv50", "bad_bar", "bad_bar_dn",
@@ -599,7 +862,7 @@ def main():
     if rules.market_columns(P):
         keep_market = rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
     ev, left, n_found, n_dates = select_events(df, codes, P, args.days, data_start, args.spacs,
-                                               args.start, args.end, keep_market, args.min_dv)
+                                               args.start, args.end, keep_market, args.min_dv, uday)
 
     print("=" * 110)
     print(f"LOCK-UP EXPIRY SHORT  day 0 = first bar + {args.days} calendar days  universe={args.universe}  "
@@ -609,7 +872,7 @@ def main():
     print("=" * 110)
     print(f"New listings found (all years): {n_found:,}. Left out before that: "
           + ", ".join(f"{v:,} {k}" for k, v in left.items()) + ".")
-    print(f"Day 0 inside the dates: {n_dates:,}. Passed the universe at the day {UNIVERSE_DAY} close: "
+    print(f"Day 0 inside the dates: {n_dates:,}. Passed the universe at the day {uday} close: "
           f"{len(ev):,}.")
     if ev.empty:
         print("No events.")
@@ -619,6 +882,25 @@ def main():
           f"{len(ev) / years:.1f} a year. Median bars from the first bar to day 0: "
           f"{ev['bars_listed'].median():.0f}.")
     pd.set_option("display.width", 250)
+
+    if args.refine:
+        market = datastore.load_market(["spx_above200", "spx_above50", "spx_sma50_rising"])
+        tried = refine(df, codes, spx, market, P, args, data_start, keep_market, pa_, pb, uday)
+        print(f"\n{tried} rows above, each one more try on the same Dev data. Settle on one simple rule "
+              f"with a reason behind each choice, then test it once on the holdout.")
+        if not args.no_log:
+            name = f"{pa_}:{pb}"
+            g = pd.concat([ev, pd.DataFrame(window(ev, df, spx, pa_, pb, args.borrow_pct))], axis=1)
+            res = {k: (round(float(v), 3) if v is not None and np.isfinite(v) else None)
+                   for k, v in stats(g, name, years).items()}
+            research_log.append(
+                question="Lock-up expiry short: which entry, $ volume cut, market filter and stop?",
+                phase="lockup", split=args.universe, script="lockup_events.py --refine",
+                params={"start": args.start, "end": args.end, "days": args.days, "pick": args.pick,
+                        "spacs": args.spacs, "market": P["market"], "liq_top_pct": P["liq_top_pct"],
+                        "min_price": P["min_price"], "min_dv": args.min_dv, "borrow_pct": args.borrow_pct},
+                combinations=tried, runs=1, results=res)
+        return
 
     print(f"\nDay by day around day 0 (vs_spx = average move vs the S&P that day, %; running = their total; "
           f"med_vol_x = median volume vs the stock's usual, days {VOL_BASE[0]} to {VOL_BASE[1]}).")
@@ -661,10 +943,10 @@ def main():
         print(age_table(df, codes, spx, P, args, data_start, keep_market).round(2).to_string(index=False))
 
     name = f"{pa_}:{pb}"
-    ev = entry_features(ev, df, spx200)
+    ev = entry_features(ev, df, spx200, a=uday)
     pick = ev[ev[f"short_{name}"].notna()].reset_index(drop=True)
     print(f"\nPICK: short the close of day {pa_}, cover the close of day {pb} ({len(pick)} trades), by what was "
-          f"known at the day {UNIVERSE_DAY} close. short / hedged / b100 / win / hit25 / t_hedged are the pick; "
+          f"known at the day {uday} close. short / hedged / b100 / win / hit25 / t_hedged are the pick; "
           f"the hedged_A:B columns are the stock vs the S&P (short side, after costs) over the whole run-up "
           f"(-20:0), the drift after (0:20) and both (-20:20). The listing month's $ volume stands in for size "
           f"at the IPO (the data has no market caps). 'After the fact' rows use volume around day 0, which isn't "

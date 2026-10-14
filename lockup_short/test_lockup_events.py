@@ -163,3 +163,74 @@ def test_min_dv_keeps_only_liquid_listings():
     assert sorted(ev["symbol"]) == ["BSY", "THN"]
     ev, *_ = le.select_events(df, codes, P, 180, pd.Timestamp("2010-01-01"), "drop", None, None, min_dv=20)
     assert list(ev["symbol"]) == ["BSY"]
+
+
+def test_stop_covers_at_the_stop_or_a_gap_open_and_no_stop_matches_window():
+    df, codes = panel(toy("IPO", "2011-03-01", np.full(200, 20.0)), toy("GAP", "2011-03-01", np.full(200, 20.0)))
+    df["open"] = df["close"]
+    ev, _ = le.find_events(df, codes, 180, pd.Timestamp("2010-01-01"))
+    ev = ev.sort_values("symbol").reset_index(drop=True)          # GAP, IPO
+    rg, ri = ev["row"].to_numpy()
+    df.loc[ri + 2, "high"] = 23.0                                   # IPO trades 15% above the entry on day 2
+    df.loc[ri + 3:, ["close", "high", "open"]] = 25.0               # and keeps going
+    df.loc[rg + 2, ["open", "high", "close"]] = 26.0                # GAP opens 30% above on day 2
+    spx = spx_flat(df)
+    out = le.stopped(ev, df, spx, -5, 5, 15, borrow_pct=0.0)
+    cost = le.ce.round_trip_cost()
+    assert np.isclose(out["raw_-5:5/15"][1], 15.0)                 # IPO: covered at the stop, 23
+    assert np.isclose(out["raw_-5:5/15"][0], 30.0)                 # GAP: covered at the open, 26
+    assert np.isclose(out["short_-5:5/15"][1], -15.0 - cost)
+    assert list(out["out_-5:5/15"]) == [1.0, 1.0]
+    plain = le.window(ev, df, spx, -5, 5, borrow_pct=5.0)
+    none = le.stopped(ev, df, spx, -5, 5, 0, borrow_pct=5.0)
+    for k in ["raw", "short", "hedged", "b100", "hit"]:
+        assert np.allclose(plain[f"{k}_-5:5"], none[f"{k}_-5:5/0"])
+    assert list(none["out_-5:5/0"]) == [0.0, 0.0]
+    assert np.allclose(none["peak_-5:5/0"], [30.0, 25.0])
+
+
+def test_stop_flags_a_stock_that_ends_before_the_cover():
+    df, codes = panel(toy("IPO", "2011-03-01", np.full(200, 20.0)))
+    df["open"] = df["close"]
+    ev, _ = le.find_events(df, codes, 180, pd.Timestamp("2010-01-01"))
+    r = ev["row"].iloc[0]
+    df = df.iloc[:r + 3].reset_index(drop=True)                    # bought out on day 2
+    df.loc[r - 2:, ["close", "high", "open"]] = 24.0
+    ev["last"] = r + 2
+    out = le.stopped(ev, df, spx_flat(df), -5, 5, 0, borrow_pct=0.0)
+    assert out["end_-5:5/0"][0] == 1.0
+    assert np.isclose(out["raw_-5:5/0"][0], 20.0)                  # covered at the last close
+
+
+def test_select_events_judges_the_universe_at_the_given_day():
+    df, codes = panel(toy("IPO", "2011-03-01", np.full(200, 20.0)))
+    ev, _ = le.find_events(df, codes, 180, pd.Timestamp("2010-01-01"))
+    r = ev["row"].iloc[0]
+    df["listed"], df["dv50"], df["dv_pct"] = 1, 50e6, 90.0
+    df["bars_since_break"], df["tight_10"] = np.nan, 0.5
+    df.loc[r - 40, "unadj_close"] = 3.0                             # under $5 on day -40 only
+    P = {"min_price": 5.0, "liq_top_pct": 80.0}
+    at20, *_ = le.select_events(df, codes, P, 180, pd.Timestamp("2010-01-01"), "drop", None, None)
+    at40, *_ = le.select_events(df, codes, P, 180, pd.Timestamp("2010-01-01"), "drop", None, None, uday=-40)
+    assert len(at20) == 1 and len(at40) == 0
+
+
+def test_path_tracks_the_open_profit_and_how_far_it_went_against():
+    df, codes = panel(toy("WIN", "2011-03-01", np.full(200, 20.0)), toy("LOS", "2011-03-01", np.full(200, 20.0)))
+    df["low"] = df["close"]
+    ev, _ = le.find_events(df, codes, 180, pd.Timestamp("2010-01-01"))
+    ev = ev.sort_values("symbol").reset_index(drop=True)          # LOS, WIN
+    rl, rw = ev["row"].to_numpy()
+    df.loc[rw - 4, "high"] = 24.0                                   # WIN: 20% against on day -4,
+    df.loc[rw - 3:rw + 5, ["close", "low", "high"]] = 18.0          # then 10% down from day -3
+    df.loc[rl - 3:rl + 5, ["close", "low", "high"]] = 22.0          # LOS: 10% up from day -3
+    spx = spx_flat(df)
+    ev = pd.concat([ev, pd.DataFrame(le.window(ev, df, spx, -5, 5, 0.0))], axis=1)
+    by_day, by_outcome = le.path(ev, df, spx, -5, 5)
+    assert list(by_day["day"]) == [0, 5]
+    assert np.allclose(by_day["avg"], 0.0) and np.allclose(by_day["p75"], 5.0)
+    assert np.allclose(by_day["ahead_%"], 50.0)
+    o = by_outcome.set_index("group")
+    assert np.isclose(o.loc["winners", "med_against"], 20.0) and o.loc["winners", "against15_%"] == 100
+    assert o.loc["winners", "against25_%"] == 0 and np.isclose(o.loc["winners", "med_best"], 10.0)
+    assert np.isclose(o.loc["losers", "med_against"], 10.0)
