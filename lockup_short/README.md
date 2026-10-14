@@ -21,6 +21,7 @@ after costs?
 python lockup_short/lockup_events.py --start 2010-01-01
 python lockup_short/lockup_events.py --start 2010-01-01 --days 90
 python lockup_short/lockup_events.py --start 2010-01-01 --pick=-3:1 --sample 10
+python lockup_short/lockup_events.py --start 2010-01-01 --pick=-20:10 --min-dv 20 --refine
 python -m pytest lockup_short
 ```
 
@@ -30,3 +31,9 @@ listing-month dollar volume), run-up since listing and volume around day 0. Add
 
 The "does the date matter?" table repeats the windows with day 0 at 90, 120, 150, 180, 210, 240, 300 and
 365 days after the first bar, to tell a lock-up effect from young stocks lagging in general.
+
+`--refine` prints only the tables for settling on one rule before the holdout, for the pick and the
+`--min-dv` sample: earlier entries (day -60 to -5, covering at day 0 and at the pick's cover), the
+dollar-volume cut ($0 to $100M a day), the S&P at the entry (above or below its 200-day, uptrend or
+not), stops at 15/25/40% above the entry, and the 10 worst trades to check on a chart. Each row is
+judged at the entry close, so an entry before day -20 (`--pick=-40:10`) moves the universe check there.
