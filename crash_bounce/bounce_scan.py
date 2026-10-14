@@ -10,10 +10,10 @@ close the day before the crash day: filled at the open if it opens above that, e
 the limit if the day's high reaches it. No stop; cover at the close of the 10th trading
 day after the entry.
 
-Run it each evening after refreshing the data, after spike_scan.py:
-  python build_data.py
-  python build_features.py
-  python spike_scan.py
+Run it each evening after refreshing the data, after spike_short/spike_scan.py:
+  python pipeline/build_data.py
+  python pipeline/build_features.py
+  python spike_short/spike_scan.py
   python crash_bounce/bounce_scan.py
   python crash_bounce/bounce_scan.py --asof 2025-05-07     # what it would have said that evening (not saved)
 
@@ -33,7 +33,8 @@ import numpy as np
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "spike_short"))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "crash_short"))
 sys.path.insert(0, HERE)
 
@@ -131,7 +132,7 @@ def scan(asof, P, borrow_pct):
         df = datastore.load_panel(cols, start=asof - pd.Timedelta(days=LOOKBACK_DAYS), end=asof,
                                   universe="all", unlock_holdout=True)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     if df.empty:
         raise SystemExit(f"No bars in the {LOOKBACK_DAYS} days to {asof.date()}: refresh the data first.")
     symbols = datastore.load_symbols()
@@ -161,7 +162,7 @@ def main():
           f"no stop; cover after {bs.FROZEN_HOLD} days)")
     print("=" * 78)
     if last < pd.Timestamp.today().normalize() - pd.Timedelta(days=4) and not args.asof:
-        print(f"!! The data ends {last.date()}. Run build_data.py and build_features.py for today's list.")
+        print(f"!! The data ends {last.date()}. Run pipeline/build_data.py and pipeline/build_features.py for today's list.")
     print(f"\nOrders for the next session ({len(order_list)}). Short with a day limit order at short_limit, regular "
           f"hours only: it fills at the open if the stock opens above it. Not filled by the close: the setup is "
           f"gone. No stop. Cover at the close of the {bs.FROZEN_HOLD}th trading day after the fill. "

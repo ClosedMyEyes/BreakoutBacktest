@@ -18,11 +18,13 @@ No look-ahead: every feature on day t uses bars up to and including t. Pivots
 level for day t+1.
 
 HOW TO RUN:
-  python build_features.py
-  python build_features.py --chunk 1500     # fewer symbols per chunk if RAM is tight
+  python pipeline/build_features.py
+  python pipeline/build_features.py --chunk 1500  # fewer symbols per chunk if RAM is tight
 """
 
 import argparse
+import os
+import sys
 import time
 
 import numpy as np
@@ -30,8 +32,11 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import config
-from rules import price_breaks
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+from rules import price_breaks  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--chunk", type=int, default=3000, help="Symbols per chunk")
@@ -503,7 +508,7 @@ def main():
         config.MARKET_FEATURES_FILE, index=False)
 
     print(f"Done in {time.time() - t0:.0f}s")
-    print("Next: hand-check five tickers against TradingView with check_features.py")
+    print("Next: hand-check five tickers against TradingView with python tools/check_features.py")
 
 
 if __name__ == "__main__":

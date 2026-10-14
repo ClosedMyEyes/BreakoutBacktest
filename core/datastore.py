@@ -45,7 +45,7 @@ def tradable_symbols(universe):
     if universe == "all":
         return None
     if not os.path.exists(config.SPLIT_FILE):
-        raise FileNotFoundError(f"{config.SPLIT_FILE} missing: run make_split.py first")
+        raise FileNotFoundError(f"{config.SPLIT_FILE} missing: run python pipeline/make_split.py first")
     split = pd.read_csv(config.SPLIT_FILE)
     side = dict(zip(split["symbol"].astype(str), split["split"]))
     # A return to the exchanges (SYMBOL~2) is the same company as SYMBOL, so it

@@ -10,10 +10,10 @@ backtest: $5+ printed close, top 80% by dollar volume, no price break in the
 past year, and only the first gap-up in 10 bars.
 
 Run it each evening after refreshing the data:
-  python build_data.py
-  python build_features.py
-  python spike_scan.py
-  python spike_scan.py --asof 2025-05-07     # what it would have said that evening (not saved)
+  python pipeline/build_data.py
+  python pipeline/build_features.py
+  python spike_short/spike_scan.py
+  python spike_short/spike_scan.py --asof 2025-05-07  # what it would have said that evening (not saved)
 
 Prints:
   1. The watch list for the next open, with the price the open has to beat.
@@ -27,17 +27,21 @@ the rule can only be judged on trades from here on now that the locked half is u
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 
-import config
-import datastore
-import engine
-import engine_short
-import rules
-import spike_short as ss
-from params import add_param_flags, collect
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import datastore  # noqa: E402
+import engine  # noqa: E402
+import engine_short  # noqa: E402
+import rules  # noqa: E402
+import spike_short as ss  # noqa: E402
+from params import add_param_flags, collect  # noqa: E402
 
 RULE = {"bars": 10, "gain": 100.0, "min_gap": 2.0, "stop": 25.0, "hold": 10}
 LOOKBACK_DAYS = 90               # calendar days of bars loaded: the run, the first-in-10 rule, recent trades
@@ -151,7 +155,7 @@ def main():
         df = datastore.load_panel(cols, start=asof - pd.Timedelta(days=LOOKBACK_DAYS), end=asof,
                                   universe="all", unlock_holdout=True)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     if df.empty:
         raise SystemExit(f"No bars in the {LOOKBACK_DAYS} days to {asof.date()}: refresh the data first.")
     symbols = datastore.load_symbols()
@@ -168,7 +172,7 @@ def main():
           f"{RULE['min_gap']:g}%+ above the prior high, stop {RULE['stop']:g}%, cover after {RULE['hold']} days)")
     print("=" * 78)
     if last < pd.Timestamp.today().normalize() - pd.Timedelta(days=4) and not args.asof:
-        print(f"!! The data ends {last.date()}. Run build_data.py and build_features.py for today's list.")
+        print(f"!! The data ends {last.date()}. Run pipeline/build_data.py and pipeline/build_features.py for today's list.")
     print(f"\nWatch list for the next open ({len(watch)}). Short at the open only if it opens above "
           f"short_if_open_above; stop 25% above your fill; cover at the close of the 10th trading day. "
           f"Prices are what it actually traded at.")

@@ -14,16 +14,16 @@ fade. Exit xs2 by default
 dividend paid while short.
 
 HOW TO RUN:
-  python setup_short.py                                  # S1 20-day breakdown, S&P below its 200-day
-  python setup_short.py --family s1 --n 50
-  python setup_short.py --family s5 --market off          # any market (for comparison)
-  python setup_short.py --family s3 --s3-v 1.8
-  python setup_short.py --family s2 --flag-w 8 --flag-d-pct 30
-  python setup_short.py --family s6 --s6-dr-min 0.7          # pullback of at least 70%
-  python setup_short.py --family s7 --pool on                # slow fade, downtrend stocks only
-  python setup_short.py --borrow-pct 3                    # costlier borrow
-  python setup_short.py --save-trades results/s1.csv
-  python setup_short.py --sample 10 --sample-result win   # 10 random winners to check on charts
+  python breakout/setup_short.py                                  # S1 20-day breakdown, S&P below its 200-day
+  python breakout/setup_short.py --family s1 --n 50
+  python breakout/setup_short.py --family s5 --market off          # any market (for comparison)
+  python breakout/setup_short.py --family s3 --s3-v 1.8
+  python breakout/setup_short.py --family s2 --flag-w 8 --flag-d-pct 30
+  python breakout/setup_short.py --family s6 --s6-dr-min 0.7          # pullback of at least 70%
+  python breakout/setup_short.py --family s7 --pool on                # slow fade, downtrend stocks only
+  python breakout/setup_short.py --borrow-pct 3                    # costlier borrow
+  python breakout/setup_short.py --save-trades results/s1.csv
+  python breakout/setup_short.py --sample 10 --sample-result win   # 10 random winners to check on charts
 
 Prints GRID_RESULT:<json> with --output-json (used by grid.py).
 """
@@ -31,17 +31,21 @@ Prints GRID_RESULT:<json> with --output-json (used by grid.py).
 import argparse
 import json
 import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-import datastore
-import engine
-import engine_short
-import rules_short
-from params import add_param_flags, add_run_flags, collect
-from reports import block_table, exit_table
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import datastore  # noqa: E402
+import engine  # noqa: E402
+import engine_short  # noqa: E402
+import rules_short  # noqa: E402
+from params import add_param_flags, add_run_flags, collect  # noqa: E402
+from reports import block_table, exit_table  # noqa: E402
 
 GROUPS = ["s_universe", "s_template", "s_entry", "s_exit"]
 parser = argparse.ArgumentParser()
@@ -164,7 +168,7 @@ def print_sample(trades, setups):
     if setups.get("entry") == "signal":          # S3, S4, S6 short the signal day's close
         view = view.drop(columns="trigger")
     print(f"\n{len(s)} random shorts to check on a chart (split-adjusted prices; "
-          f"python show_data.py SYMBOL --around DATE):")
+          f"python tools/show_data.py SYMBOL --around DATE):")
     print(view.to_string(index=False))
 
 

@@ -8,7 +8,7 @@ fill in the `decision` column by hand once you've looked at the results.
 The `combinations` column is what keeps the multiple-testing count honest
 (plan 3.9): sum it over a phase to know how many variants were tried.
 
-    python research_log.py            # print the log and the running total of tries
+    python core/research_log.py  # print the log and the running total of tries
 """
 
 import csv

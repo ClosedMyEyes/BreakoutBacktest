@@ -82,7 +82,8 @@ import numpy as np
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "spike_short"))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "crash_rebound"))
 
 import datastore  # noqa: E402
@@ -388,7 +389,7 @@ def load_crashes(args, P):
         df = datastore.load_panel(cols, start=lead, end=args.end, universe=args.universe,
                                   unlock_holdout=args.unlock_holdout, tail_days=60)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     symbols = datastore.load_symbols()
     panel = engine.Panel(df, set(symbols.loc[symbols["delisted"], "symbol"]))
     univ = rules.universe_mask(panel.df, P).copy()
@@ -484,7 +485,7 @@ def detail_tables(D, t, cand, args, pick, has_stop):
             "covered": s["exit_date"].dt.date, "cover_px": ((s["exit"] - comm) / (1 + slip)).round(2),
             "reason": s["exit_reason"], "ret_%": s["ret_pct"].round(1)})
         print(f"\n{len(s)} random trades to check on a chart (prices split-adjusted to today, like TradingView; "
-              f"real_px = the price it actually traded at that day; python show_data.py SYMBOL --around DATE):")
+              f"real_px = the price it actually traded at that day; python tools/show_data.py SYMBOL --around DATE):")
         print(view.to_string(index=False))
 
     if args.save_trades:

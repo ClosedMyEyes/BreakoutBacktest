@@ -17,23 +17,28 @@ The market filter defaults to off here so the regime table shows every
 regime; --market below200 / downtrend applies it.
 
 HOW TO RUN:
-  python filter_short.py --breakdowns                 # with regime / decade / size tables
-  python filter_short.py --market below200
-  python filter_short.py --max-rs 20 --former-leader on
+  python breakout/filter_short.py --breakdowns        # with regime / decade / size tables
+  python breakout/filter_short.py --market below200
+  python breakout/filter_short.py --max-rs 20 --former-leader on
 """
 
 import argparse
 import json
+import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-import config
-import datastore
-import rules_short
-from params import add_param_flags, add_run_flags, collect
-from reports import by_date_stats, spx_forward, tstat_overlap
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import datastore  # noqa: E402
+import rules_short  # noqa: E402
+from params import add_param_flags, add_run_flags, collect  # noqa: E402
+from reports import by_date_stats, spx_forward, tstat_overlap  # noqa: E402
 
 parser = argparse.ArgumentParser()
 add_param_flags(parser, ["s_universe", "s_template"])
@@ -56,7 +61,7 @@ def main():
         df = datastore.load_panel(cols, start=args.start, end=args.end, universe=args.universe,
                                   unlock_holdout=args.unlock_holdout, labels=True)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
     uni = rules_short.universe_mask(df, P)

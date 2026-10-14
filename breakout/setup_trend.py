@@ -10,16 +10,16 @@ Mode C (--mode portfolio): the Mode B trades run through an account with
 capital, max positions, risk per trade and same-day ranking.
 
 HOW TO RUN:
-  python setup_trend.py                                   # F1 50-day breakout, X2 exit, Dev
-  python setup_trend.py --family f2 --k 10 --t 8 --exit x3 --trail ema21
-  python setup_trend.py --mode portfolio --max-positions 8 --risk-pct 0.75
-  python setup_trend.py --template off --n 20 --exit time --time-bars 20 --stop-pct 0
+  python breakout/setup_trend.py                          # F1 50-day breakout, X2 exit, Dev
+  python breakout/setup_trend.py --family f2 --k 10 --t 8 --exit x3 --trail ema21
+  python breakout/setup_trend.py --mode portfolio --max-positions 8 --risk-pct 0.75
+  python breakout/setup_trend.py --template off --n 20 --exit time --time-bars 20 --stop-pct 0
                                                           # Phase 4 dummy strategy
-  python setup_trend.py --save-trades results/trades.csv  # trade log for hand checks
-  python setup_trend.py --sample 10                       # 10 random trades to check on charts
-  python setup_trend.py --sample 10 --sample-reason delisted
-  python setup_trend.py --family f3 --sample 5 --sample-result win    # 5 random winners
-  python setup_trend.py --family f3 --market trend        # only while the S&P 500 is in an uptrend
+  python breakout/setup_trend.py --save-trades results/trades.csv  # trade log for hand checks
+  python breakout/setup_trend.py --sample 10                       # 10 random trades to check on charts
+  python breakout/setup_trend.py --sample 10 --sample-reason delisted
+  python breakout/setup_trend.py --family f3 --sample 5 --sample-result win    # 5 random winners
+  python breakout/setup_trend.py --family f3 --market trend        # only while the S&P 500 is in an uptrend
 
 Prints GRID_RESULT:<json> with --output-json (used by grid.py).
 """
@@ -27,16 +27,20 @@ Prints GRID_RESULT:<json> with --output-json (used by grid.py).
 import argparse
 import json
 import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-import datastore
-import engine
-import rules
-from params import add_param_flags, add_run_flags, collect
-from reports import block_table, exit_table
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import datastore  # noqa: E402
+import engine  # noqa: E402
+import rules  # noqa: E402
+from params import add_param_flags, add_run_flags, collect  # noqa: E402
+from reports import block_table, exit_table  # noqa: E402
 
 parser = argparse.ArgumentParser()
 add_param_flags(parser, ["universe", "template", "entry", "exit", "portfolio"])
@@ -170,7 +174,7 @@ def print_sample(trades, df, setups, n, reason=None, result="all", seed=0):
         view.insert(3, "range_ratio", df["atr_ratio"].to_numpy()[sig].round(2))
         view.insert(4, "vol_ratio", df["vol10_50"].to_numpy()[sig].round(2))
     print(f"\n{len(s)} random trades to check on a chart (split-adjusted prices; "
-          f"delisted stocks: python show_data.py SYMBOL):")
+          f"delisted stocks: python tools/show_data.py SYMBOL):")
     print(view.to_string(index=False))
 
 

@@ -5,11 +5,11 @@ Prints what build_data.py saved for one stock, or searches symbols.parquet,
 so you don't need to open Parquet files by hand.
 
 HOW TO RUN:
-  python show_data.py ABPO              # symbol info + first/last bars + every adjustment day
-  python show_data.py ABPO --rows 40    # more bars from the start of its history
-  python show_data.py --find lehman     # search names and tickers
-  python show_data.py --delisted        # every delisted stock with its last date and price
-  python show_data.py MSA --around 2007-12-05   # the bars either side of a date (check a trade)
+  python tools/show_data.py ABPO              # symbol info + first/last bars + every adjustment day
+  python tools/show_data.py ABPO --rows 40    # more bars from the start of its history
+  python tools/show_data.py --find lehman     # search names and tickers
+  python tools/show_data.py --delisted        # every delisted stock with its last date and price
+  python tools/show_data.py MSA --around 2007-12-05   # the bars either side of a date (check a trade)
 
 Columns in the bar table:
   close        adjusted close (what all features use)
@@ -23,12 +23,17 @@ Columns in the bar table:
 """
 
 import argparse
+import os
+import sys
 
 import pandas as pd
 import pyarrow.parquet as pq
 
-import config
-import rules
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import rules  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("symbol", nargs="?")

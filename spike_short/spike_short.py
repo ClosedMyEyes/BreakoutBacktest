@@ -27,12 +27,12 @@ position sizes (1.0 = one whole position made); max_dd = worst drop in that
 running total, trades taken in exit order at equal size.
 
 HOW TO RUN:
-  python spike_short.py --start 2010-01-01                   # the grid + by year for the pick
-  python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
-  python spike_short.py --start 2010-01-01 --hold 5
-  python spike_short.py --start 2010-01-01 --mins 30,50 --stops 0,20
-  python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
-  python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 2 --sizes 2.5,5,10
+  python spike_short/spike_short.py --start 2010-01-01  # the grid + by year for the pick
+  python spike_short/spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
+  python spike_short/spike_short.py --start 2010-01-01 --hold 5
+  python spike_short/spike_short.py --start 2010-01-01 --mins 30,50 --stops 0,20
+  python spike_short/spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
+  python spike_short/spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 2 --sizes 2.5,5,10
 
 The pick also gets a squeeze table: its trades split by what was known at entry
 (gap size, run size, volume, RSI(14), 52-week high, price, trends, liquidity),
@@ -45,18 +45,22 @@ Every run adds a row to the research log.
 
 import argparse
 import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-import config
-import datastore
-import engine
-import engine_short
-import research_log
-import rules
-from params import add_param_flags, add_run_flags, collect
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import datastore  # noqa: E402
+import engine  # noqa: E402
+import engine_short  # noqa: E402
+import research_log  # noqa: E402
+import rules  # noqa: E402
+from params import add_param_flags, add_run_flags, collect  # noqa: E402
 
 RUN_BARS = [3, 10]
 RUN_MINS = [50, 100]
@@ -372,7 +376,7 @@ def main():
         df = datastore.load_panel(cols, start=args.start, end=args.end, universe=args.universe,
                                   unlock_holdout=args.unlock_holdout, tail_days=120)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     symbols = datastore.load_symbols()
     panel = engine.Panel(df, set(symbols.loc[symbols["delisted"], "symbol"]))
     keep = rules.universe_mask(panel.df, P).copy()
@@ -453,7 +457,7 @@ def main():
             "reason": s["exit_reason"], "ret_%": s["ret_pct"].round(1)})
         print(f"\n{len(s)} random trades to check on a chart (prices split-adjusted to today, like "
               f"TradingView; real_px = the price it actually traded at that day; "
-              f"python show_data.py SYMBOL --around DATE):")
+              f"python tools/show_data.py SYMBOL --around DATE):")
         print(view.to_string(index=False))
 
     if args.sizes:
