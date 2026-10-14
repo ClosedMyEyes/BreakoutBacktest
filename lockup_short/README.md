@@ -27,3 +27,6 @@ python -m pytest lockup_short
 The run also prints a volatility check around day 0 and the pick split by size (price, dollar volume,
 listing-month dollar volume), run-up since listing and volume around day 0. Add
 `--min-price 1 --liq-top-pct 100` to include the small, thin stocks the default universe leaves out.
+
+The "does the date matter?" table repeats the windows with day 0 at 90, 120, 150, 180, 210, 240, 300 and
+365 days after the first bar, to tell a lock-up effect from young stocks lagging in general.
