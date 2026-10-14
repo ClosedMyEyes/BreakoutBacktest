@@ -51,6 +51,10 @@ HOW TO RUN:
   python lockup_short/lockup_events.py --start 2010-01-01 --days 90
   python lockup_short/lockup_events.py --start 2010-01-01 --pick=-3:1 --sample 10   (the = is needed before a minus)
   python lockup_short/lockup_events.py --start 2010-01-01 --spacs keep
+
+The VOLATILITY tables (after the day-by-day profile) ask whether stocks swing more
+around day 0 in either direction: the size of daily moves, ranges and gaps, and
+5-day blocks from day -60 to +40, each against the stock's own usual.
 """
 
 import argparse
@@ -224,6 +228,89 @@ def profile(ev, df, spx):
     return pd.DataFrame(rows)
 
 
+VOL_OFFSETS = np.arange(-60, 41)     # days covered by the volatility check
+VOL_DAILY = range(-10, 11)           # days shown one by one
+VOL_BLOCK = 5                        # then in 5-day blocks over all of VOL_OFFSETS
+BIG_DAY, BIG_BLOCK = 5.0, 15.0       # % moves vs the S&P counted as big
+
+
+def daily_matrix(ev, df, spx, offsets=VOL_OFFSETS):
+    """Per event (rows) and day offset (columns): the day's move vs the S&P, its
+    high-low range and its opening gap, all in % of the prior close. NaN outside the
+    stock's life and on price-break days."""
+    c = df["close"].to_numpy(np.float64)
+    o = df["open"].to_numpy(np.float64)
+    h = df["high"].to_numpy(np.float64)
+    lo = df["low"].to_numpy(np.float64)
+    brk = ((df["bad_bar_dn"].fillna(0) > 0) | (df["bad_bar"].fillna(0) > 0)).to_numpy()
+    pos = spx.index.get_indexer(pd.DatetimeIndex(df["date"].to_numpy()))
+    sc = spx.to_numpy()
+    r, first, last = ev["row"].to_numpy(), ev["first"].to_numpy(), ev["last"].to_numpy()
+    shape = (len(r), len(offsets))
+    x, rng, gap = np.full(shape, np.nan), np.full(shape, np.nan), np.full(shape, np.nan)
+    for k, d in enumerate(offsets):
+        j = r + d
+        ok = (j - 1 >= first) & (j <= last)
+        jj, ii = np.where(ok, j, r), np.where(ok, j - 1, r)
+        pi, pj = pos[ii], pos[jj]
+        sp = np.where((pi >= 0) & (pj >= 0), sc[np.maximum(pj, 0)] / sc[np.maximum(pi, 0)] - 1, np.nan)
+        ok &= ~brk[jj] & (c[ii] > 0)
+        x[:, k] = np.where(ok, (c[jj] / c[ii] - 1 - sp) * 100, np.nan)
+        rng[:, k] = np.where(ok, (h[jj] - lo[jj]) / c[ii] * 100, np.nan)
+        gap[:, k] = np.where(ok, np.abs(o[jj] / c[ii] - 1) * 100, np.nan)
+    return x, rng, gap
+
+
+def volatility(ev, df, spx, offsets=VOL_OFFSETS):
+    """Does the stock swing more around day 0, either way? Returns (daily, blocks).
+    Each stock's usual is its own average over days VOL_BASE (before the run-up to day 0).
+    daily: one row per day in VOL_DAILY. blocks: 5-day blocks over all offsets."""
+    x, rng, gap = daily_matrix(ev, df, spx, offsets)
+    ax = np.abs(x)
+    base = (offsets >= VOL_BASE[0]) & (offsets <= VOL_BASE[1])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        usual_abs = np.nanmean(ax[:, base], axis=1)
+        usual_rng = np.nanmean(rng[:, base], axis=1)
+        usual_sd = np.sqrt(np.nanmean(x[:, base] ** 2, axis=1))
+    usual_abs[usual_abs <= 0] = np.nan
+    usual_rng[usual_rng <= 0] = np.nan
+    usual_sd[usual_sd <= 0] = np.nan
+
+    def pct(a):
+        a = a[np.isfinite(a)]
+        return a.mean() * 100 if len(a) else np.nan
+
+    rows = []
+    for d in VOL_DAILY:
+        k = int(np.flatnonzero(offsets == d)[0])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            rows.append({"day": d, "abs_move": np.nanmean(ax[:, k]),
+                         "move_x": np.nanmean(ax[:, k] / usual_abs),
+                         "range": np.nanmean(rng[:, k]),
+                         "range_x": np.nanmean(rng[:, k] / usual_rng),
+                         "gap": np.nanmean(gap[:, k]),
+                         f"big{BIG_DAY:g}_%": pct(np.where(np.isfinite(ax[:, k]), ax[:, k] >= BIG_DAY, np.nan))})
+    daily = pd.DataFrame(rows)
+
+    rows = []
+    for start in range(int(offsets[0]), int(offsets[-1]) - VOL_BLOCK + 2, VOL_BLOCK):
+        cols = (offsets >= start) & (offsets < start + VOL_BLOCK)
+        xs = x[:, cols]
+        full = np.isfinite(xs).all(axis=1)
+        tot = np.where(full, (np.prod(1 + np.nan_to_num(xs) / 100, axis=1) - 1) * 100, np.nan)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            sd = np.where(full, np.sqrt(np.nanmean(xs ** 2, axis=1)), np.nan)
+            rows.append({"days": f"{start} to {start + VOL_BLOCK - 1}",
+                         "events": int(full.sum()),
+                         "sd_5d": np.nanstd(tot),
+                         "abs_5d": np.nanmean(np.abs(tot)),
+                         f"big{BIG_BLOCK:g}_%": pct(np.where(full, np.abs(tot) >= BIG_BLOCK, np.nan)),
+                         "vol_x": np.nanmean(sd / usual_sd),
+                         "range_x": np.nanmean(np.nanmean(rng[:, cols], axis=1) / usual_rng),
+                         "avg_5d": np.nanmean(tot)})
+    return daily, pd.DataFrame(rows)
+
+
 def stats(g, name, years):
     out = {"events": len(g), "per_yr": len(g) / years}
     s = g[f"short_{name}"].dropna()
@@ -308,7 +395,7 @@ def main():
     pa_, pb = parse_pick(args.pick)
 
     t0 = time.time()
-    cols = (rules.universe_columns(P) + ["high", "close", "volume", "dv50", "bad_bar", "bad_bar_dn",
+    cols = (rules.universe_columns(P) + ["open", "high", "low", "close", "volume", "dv50", "bad_bar", "bad_bar_dn",
                                          "in_sp500", "in_sp400", "in_sp600"])
     try:
         # Full history: the first bar decides day 0, however long before --start it was
@@ -360,6 +447,18 @@ def main():
           f"med_vol_x = median volume vs the stock's usual, days {VOL_BASE[0]} to {VOL_BASE[1]}).")
     print("A volume bump near day 0 means the date lines up with real lock-up selling.")
     print(profile(ev, df, spx).round(2).to_string(index=False))
+
+    vd, vb = volatility(ev, df, spx)
+    print(f"\nVOLATILITY around day 0: does the stock swing more, either way? All in % vs the S&P. _x columns "
+          f"= against the stock's own usual (days {VOL_BASE[0]} to {VOL_BASE[1]}), about 1 when nothing changes "
+          f"and 1.3 for 30% bigger. New listings calm down as they age, so compare day 0 with the days either side.")
+    print(f"  abs_move = average size of the day's move; range = high-low; gap = size of the opening gap; "
+          f"big{BIG_DAY:g}_% = share of days moving {BIG_DAY:g}%+ either way.")
+    print(vd.round(2).to_string(index=False))
+    print(f"\n  5-day blocks: sd_5d / abs_5d = spread and average size of the 5-day move across stocks; "
+          f"big{BIG_BLOCK:g}_% = share moving {BIG_BLOCK:g}%+ either way; vol_x = daily volatility (root mean square move) vs usual; "
+          f"avg_5d = average move (direction).")
+    print(vb.round(2).to_string(index=False))
 
     grid = [(a, b) for a in ENTRIES for b in EXITS if b > a]
     if (pa_, pb) not in grid:
