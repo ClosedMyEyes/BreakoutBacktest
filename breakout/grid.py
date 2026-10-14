@@ -9,7 +9,7 @@ HOW TO USE:
   1. Pick BACKTESTER_FILE: filter_test.py (Mode A) or setup_trend.py (Modes B, C);
      for the short side filter_short.py or setup_short.py (log its runs as phases S5-S12)
   2. Edit PARAM_GRID and FIXED_ARGS below
-  3. Run: python grid.py
+  3. Run: python breakout/grid.py
 
 WHAT'S NEW vs the intraday grid.py:
   - WINDOWS: run every combination on several date windows. "walkforward"
@@ -43,8 +43,11 @@ import time
 
 import pandas as pd
 
-import config
-import research_log
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import research_log  # noqa: E402
 
 # =============================================================================
 # CONFIGURATION — edit here

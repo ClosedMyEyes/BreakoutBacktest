@@ -6,17 +6,22 @@ with the day-over-day change, so you can see which one keeps a spin-off or
 special dividend from looking like a crash. Needs Norgate Data Updater running.
 
 HOW TO RUN:
-  python check_adjust.py ABT 2013-01-02     # AbbVie spin-off
-  python check_adjust.py DPZ 2007-05-07     # Domino's special dividend
-  python check_adjust.py MSA 2008-01-09 --bars 3
+  python tools/check_adjust.py ABT 2013-01-02  # AbbVie spin-off
+  python tools/check_adjust.py DPZ 2007-05-07  # Domino's special dividend
+  python tools/check_adjust.py MSA 2008-01-09 --bars 3
 """
 
 import argparse
+import os
+import sys
 
 import norgatedata as nd
 import pandas as pd
 
-import config
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("symbol")

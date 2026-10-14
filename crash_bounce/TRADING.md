@@ -11,9 +11,9 @@ The frozen rule (`prev:touch:1:0`, hold 10, no stop; holdout passed 2026-10-13):
 Run the bounce scan after the spike scan, on the same refreshed data:
 
 ```
-python build_data.py
-python build_features.py
-python spike_scan.py
+python pipeline/build_data.py
+python pipeline/build_features.py
+python spike_short/spike_scan.py
 python crash_bounce/bounce_scan.py
 ```
 
@@ -44,7 +44,7 @@ It marks:
 - **Covers:** a gray x on the 10th bar after the entry.
 - **A crash on the last bar:** a label with the limit for the next session.
 
-Set "Lowest 50-day average dollar volume" to the liquidity floor `spike_scan.py` prints each night. Both setups use the same floor. The indicator doesn't check Norgate's bad-data bars or the backtest's rule against a price break in the past year.
+Set "Lowest 50-day average dollar volume" to the liquidity floor `spike_short/spike_scan.py` prints each night. Both setups use the same floor. The indicator doesn't check Norgate's bad-data bars or the backtest's rule against a price break in the past year.
 
 Check it on trades the backtest took. Each chart should show a triangle on the crash day, an S the next session and an x on the cover:
 

@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "crash_rebound"))
 
 import config  # noqa: E402
@@ -129,7 +129,7 @@ def main():
         df = datastore.load_panel(cols, start=lead, end=args.end, universe=args.universe,
                                   unlock_holdout=args.unlock_holdout, tail_days=40)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
     codes = df["symbol"].cat.codes.to_numpy()
     c = df["close"].to_numpy(np.float64)

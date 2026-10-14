@@ -1,12 +1,12 @@
 # The gap-up short on TradingView
 
-`spike_signal.pine` is the frozen rule from `spike_short.py` as a daily-chart indicator. It marks:
+`spike_signal.pine` is the frozen rule from `spike_short/spike_short.py` as a daily-chart indicator. It marks:
 - **Signal days**, with an orange triangle. These are the closes that put a stock on the next morning's watch list.
 - **Entries the backtest would have taken**, with a red S and a dashed stop line 25% above the open, drawn for 10 bars.
 
 On the last bar, a label gives the price the next open has to beat.
 
-It also applies the backtest's liquidity floor. The stock's 50-day average dollar volume on the signal day has to clear the bottom 20% of listed stocks, and the stock needs 50 days of history. `spike_scan.py` prints the floor in dollars each night as "Liquidity floor tonight". Put that figure in the indicator's "Lowest 50-day average dollar volume" setting. The default of $250,000 is a placeholder until you do. The one backtest check it leaves out is Norgate's bad-data bars.
+It also applies the backtest's liquidity floor. The stock's 50-day average dollar volume on the signal day has to clear the bottom 20% of listed stocks, and the stock needs 50 days of history. `spike_short/spike_scan.py` prints the floor in dollars each night as "Liquidity floor tonight". Put that figure in the indicator's "Lowest 50-day average dollar volume" setting. The default of $250,000 is a placeholder until you do. The one backtest check it leaves out is Norgate's bad-data bars.
 
 ## Add it (once)
 
@@ -30,7 +30,7 @@ TradingView's stock screener can't filter on "100% above the lowest close of the
    - With a Premium plan or higher, the Pine Screener can do this check in one pass. Put the candidates in a watchlist and run the Pine Screener on it with this indicator on 1D. Then filter on "Watch (1 = short next open if it gaps)" equal to 1, or on the "Spike watch" alert condition.
 3. Post the list in the project thread: ticker, today's close and the price to beat. Claude builds the news dossiers and runs the three blind judges before the open.
 
-The two screens can still miss a stock that fell into its low and doubled more than a week ago. `spike_scan.py` on the full data misses nothing, so use it while the Norgate data is still current.
+The two screens can still miss a stock that fell into its low and doubled more than a week ago. `spike_short/spike_scan.py` on the full data misses nothing, so use it while the Norgate data is still current.
 
 ## Next morning
 

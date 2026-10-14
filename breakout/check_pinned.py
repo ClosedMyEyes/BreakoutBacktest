@@ -10,16 +10,21 @@ so a minimum-range filter can be set where it drops most pinned stocks and
 few real setups. Ranges are as of the signal day (no look-ahead).
 
 HOW TO RUN:
-  python setup_trend.py --save-trades results/f1_trades.csv
-  python check_pinned.py results/f1_trades.csv
+  python breakout/setup_trend.py --save-trades results/f1_trades.csv
+  python breakout/check_pinned.py results/f1_trades.csv
 """
 
 import argparse
+import os
+import sys
 
 import numpy as np
 import pandas as pd
 
-import datastore
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import datastore  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("trades")

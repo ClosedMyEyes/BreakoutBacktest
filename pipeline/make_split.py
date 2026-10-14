@@ -9,16 +9,20 @@ The file is written once and then treated as locked: re-running refuses to
 overwrite it unless --force is passed. Commit split.csv to the repo.
 
 HOW TO RUN:
-  python make_split.py
+  python pipeline/make_split.py
 """
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 
-import config
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
 
 
 def make_split(symbols, seed=config.SPLIT_SEED):

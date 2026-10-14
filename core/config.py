@@ -13,7 +13,8 @@ import os
 # PATHS
 # =============================================================================
 
-ROOT_DIR  = os.path.dirname(os.path.abspath(__file__))
+# The repo's top folder (this file sits in core/), so store/, split.csv and results/ stay there
+ROOT_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR  = os.environ.get("BB_DATA_DIR", os.path.join(ROOT_DIR, "store"))
 
 PRICES_FILE   = os.path.join(DATA_DIR, "prices.parquet")     # Phase 1: one row per symbol-day
@@ -40,7 +41,7 @@ NORGATE_DATABASES = ["US Equities", "US Equities Delisted"]
 # Security subtypes kept as "common stock". Trial check (2026-10-08): subtype1
 # is Equity / Exchange Traded Product / Derivative / Hybrid / Debt. Keep Equity,
 # then drop subtype2 values listed below and names containing EXCLUDE_NAME_WORDS or "%".
-# Run `python build_data.py --list-subtypes` to see subtype2 values and the count kept.
+# Run `python pipeline/build_data.py --list-subtypes` to see subtype2 values and the count kept.
 COMMON_STOCK_SUBTYPES = ["Equity"]
 # Equity subtype2 on the trial: Operating/Holding Company 7144, Special Purpose
 # Company 886 (SPACs: cash shells that don't trend), Investment Company 477
@@ -81,7 +82,7 @@ START_DATE = "1990-01-01"
 # Domino's 2007 special dividend. Trades held through them booked fake gap
 # losses down to -13R. CAPITALSPECIAL also adjusts for special distributions;
 # ordinary dividends stay out, as the plan says. Check one with
-# python check_adjust.py ABT 2013-01-02
+# python tools/check_adjust.py ABT 2013-01-02
 PRICE_ADJUST = "CAPITALSPECIAL"
 
 # A stock's history is cut into runs on a major exchange (NYSE / Nasdaq / NYSE

@@ -10,17 +10,17 @@ This is a separate program from Stockbot and never runs inside the live trading 
 
 | Phase | What | State |
 |---|---|---|
-| 1 | `build_data.py`: Norgate → local Parquet, sanity checks | Written; tested on synthetic data |
-| 2 | `build_features.py`: indicators, RS ranks, market features, forward labels | Written; tested |
-| 3 | `make_split.py`: locked Dev/Holdout split; walk-forward windows in `grid.py` | Written; tested |
-| 4 | `engine.py`, `setup_trend.py`, `grid.py`: fill model, exits, Modes B and C | Written; tested |
-| 5 | `filter_test.py`: Mode A | Written; tested |
-| 5.4 | Kill test: F1 + X2 vs date-matched F0 | `grid.py` is set up for it |
+| 1 | `pipeline/build_data.py`: Norgate → local Parquet, sanity checks | Written; tested on synthetic data |
+| 2 | `pipeline/build_features.py`: indicators, RS ranks, market features, forward labels | Written; tested |
+| 3 | `pipeline/make_split.py`: locked Dev/Holdout split; walk-forward windows in `breakout/grid.py` | Written; tested |
+| 4 | `core/engine.py`, `breakout/setup_trend.py`, `breakout/grid.py`: fill model, exits, Modes B and C | Written; tested |
+| 5 | `breakout/filter_test.py`: Mode A | Written; tested |
+| 5.4 | Kill test: F1 + X2 vs date-matched F0 | `breakout/grid.py` is set up for it |
 | 6 | Entry families | F0–F6 done. F4 = zigzag swing points (3% or 5% swings, `--vcp-z`), F5 = pole + flag, F6 = first retest of an F1–F5 breakout, bought at the next open |
 | 7 | Exit models | X1, X2 (original or breakeven stop after the +20% hold), X3, X4 (sell part at +2R or +X%, stop to breakeven, trail the rest), X5, X6 and time exit done |
 | 8 | Mode C portfolio | Done, with Monte Carlo drawdown range |
 | 9–11 | Market light, fundamentals, earnings dates | Market features computed; rules to do |
-| 12–14 | Holdout run, scanner, forward test | Spike short: holdout passed (+5.45%/trade, t 2.41), `spike_scan.py` scanner and forward-test log done |
+| 12–14 | Holdout run, scanner, forward test | Spike short: holdout passed (+5.45%/trade, t 2.41), `spike_short/spike_scan.py` scanner and forward-test log done |
 
 The long side is parked (best version: `--family f3 --stop-mode structural --market above200`).
 
@@ -55,10 +55,10 @@ moves. The long scripts never import the short files.
   an upward one counts as a loss (`--up-break exit` to treat it like a downward one).
 
 ```
-python filter_short.py --breakdowns          # Mode A: do downtrend-template stocks keep falling?
-python setup_short.py                        # S1 vs S0, S&P below its 200-day
-python setup_short.py --family s5 --market off
-python setup_short.py --family s3 --sample 10 --sample-result loss
+python breakout/filter_short.py --breakdowns  # Mode A: do downtrend-template stocks keep falling?
+python breakout/setup_short.py                # S1 vs S0, S&P below its 200-day
+python breakout/setup_short.py --family s5 --market off
+python breakout/setup_short.py --family s3 --sample 10 --sample-result loss
 ```
 
 Short-side Mode C (portfolio) is not built yet.
@@ -72,10 +72,10 @@ and prints each bucket's next 1/3/5/10-day return against the S&P 500, with tabl
 S&P above/below its 200-day, the stock above/below its own 200-day, and size. No setups or costs yet.
 
 ```
-python reversion_test.py                       # all years, Dev
-python reversion_test.py --start 2010-01-01
-python reversion_test.py --measure ibs         # breakdown tables for another measure
-python reversion_test.py --start 2010-01-01 --spike-min 30
+python reversion/reversion_test.py                # all years, Dev
+python reversion/reversion_test.py --start 2010-01-01
+python reversion/reversion_test.py --measure ibs  # breakdown tables for another measure
+python reversion/reversion_test.py --start 2010-01-01 --spike-min 30
 ```
 
 It ends with a spike table for the short side: the first day a stock is up 10/20/30/50%+ over 3 days,
@@ -92,10 +92,10 @@ Prints a grid (win rate, average, the 1-in-20 loss, worst, % stopped, a 50%/yr b
 drawdown, years up) and a by-year table for `--pick K:X:entry:stop`.
 
 ```
-python spike_short.py --start 2010-01-01
-python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
-python spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
-python spike_short.py --start 2010-01-01 --min-gap 2 --stops 25,40 --market above200 --hold 5
+python spike_short/spike_short.py --start 2010-01-01
+python spike_short/spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --sample 10
+python spike_short/spike_short.py --start 2010-01-01 --pick 10:100:gap:25 --min-gap 5
+python spike_short/spike_short.py --start 2010-01-01 --min-gap 2 --stops 25,40 --market above200 --hold 5
 ```
 
 The pick also gets a squeeze table: its trades split by what was known at entry (gap size, run size,
@@ -111,7 +111,7 @@ drawdown if the same trades came in a random order, then the return by year. Eve
 research log.
 
 ```
-python spike_short.py --start 2010-01-01 --min-gap 2 --mins 100 --stops 25 --pick 10:100:gap:25 --sizes 2.5,5,10
+python spike_short/spike_short.py --start 2010-01-01 --min-gap 2 --mins 100 --stops 25 --pick 10:100:gap:25 --sizes 2.5,5,10
 ```
 
 Stress the costs: `--slippage-pct 1` (per fill, default 0.2), `--stop-slip 5` (intraday stops fill 5% above
@@ -132,10 +132,10 @@ triggers the short, and the setups that triggered in the last 15 trading days wi
 status. Both go into `spike_signals.csv` in the work folder, the forward-test record.
 
 ```
-python build_data.py
-python build_features.py
-python spike_scan.py
-python spike_scan.py --asof 2025-05-07     # what it would have said that evening (not saved)
+python pipeline/build_data.py
+python pipeline/build_features.py
+python spike_short/spike_scan.py
+python spike_short/spike_scan.py --asof 2025-05-07  # what it would have said that evening (not saved)
 ```
 
 `tradingview/spike_signal.pine` is the same rule as a TradingView indicator, with the steps for a nightly screen
@@ -285,67 +285,91 @@ The Norgate Data Updater must be running for `build_data.py`.
 ## Order of operations
 
 ```
-python build_data.py --list-subtypes     # trial week 1: check which security subtypes are common stock,
-                                         # then set COMMON_STOCK_SUBTYPES in config.py
-python check_adjust.py ABT 2013-01-02    # spin-offs should not look like crashes (config.PRICE_ADJUST)
-python build_data.py --limit 200         # quick end-to-end check
-python build_data.py                     # full pull (prints the Phase 1 sanity checks)
-python show_data.py ABPO                 # look at one stock's raw bars and adjustment days
-python show_data.py --find lehman        # search names; --delisted lists every delisted stock
-python build_features.py                 # Phase 2
-python check_features.py --random 5      # compare against TradingView (Phase 2 done-when)
-python make_split.py                     # Phase 3, once; commit split.csv
-python filter_test.py --breakdowns       # Mode A baseline
-python setup_trend.py                    # Mode B: F1 50-day breakout + X2, vs F0
-python setup_trend.py --mode portfolio   # Mode C
-python grid.py                           # grid / walk-forward (edit the top of the file)
-python research_log.py                   # what has been tried so far
+python pipeline/build_data.py --list-subtypes    # trial week 1: check which security subtypes are common stock,
+                                                 # then set COMMON_STOCK_SUBTYPES in core/config.py
+python tools/check_adjust.py ABT 2013-01-02      # spin-offs should not look like crashes (config.PRICE_ADJUST)
+python pipeline/build_data.py --limit 200        # quick end-to-end check
+python pipeline/build_data.py                    # full pull (prints the Phase 1 sanity checks)
+python tools/show_data.py ABPO                   # look at one stock's raw bars and adjustment days
+python tools/show_data.py --find lehman          # search names; --delisted lists every delisted stock
+python pipeline/build_features.py                # Phase 2
+python tools/check_features.py --random 5        # compare against TradingView (Phase 2 done-when)
+python pipeline/make_split.py                    # Phase 3, once; commit split.csv
+python breakout/filter_test.py --breakdowns      # Mode A baseline
+python breakout/setup_trend.py                   # Mode B: F1 50-day breakout + X2, vs F0
+python breakout/setup_trend.py --mode portfolio  # Mode C
+python breakout/grid.py                          # grid / walk-forward (edit the top of the file)
+python core/research_log.py                      # what has been tried so far
 ```
 
 Phase 4 dummy strategy (buy a 20-day high, exit after 20 days):
 
 ```
-python setup_trend.py --template off --n 20 --exit time --time-bars 20 --stop-pct 0 --save-trades results/dummy.csv
-python check_features.py --trades results/dummy.csv --n 10
+python breakout/setup_trend.py --template off --n 20 --exit time --time-bars 20 --stop-pct 0 --save-trades results/dummy.csv
+python tools/check_features.py --trades results/dummy.csv --n 10
 ```
 
-Without Norgate, `python build_data.py --source synthetic` creates fake data so the whole pipeline can be run
+Without Norgate, `python pipeline/build_data.py --source synthetic` creates fake data so the whole pipeline can be run
 and debugged. Set `BB_DATA_DIR` and `BB_WORK_DIR` to keep test data and logs out of the repo.
 
 ## Files
 
-| File | Job |
+The top folder holds only this README, `requirements.txt` and `split.csv`; every script lives in a
+folder. Run each command from the top folder, as written in this README. The data (`store/`),
+`split.csv`, `results/`, the research log and the scanners' signal files stay in the top folder.
+
+| Folder | What's in it |
 |---|---|
-| `config.py` | Paths, Norgate names, defaults (walk-forward lengths, min trades, costs) |
-| `data_sources.py` | Norgate source and the synthetic source |
-| `build_data.py` | Phase 1 |
-| `build_features.py` | Phase 2. Writes `features`, `ranks`, `labels` (forward returns, Mode A only) and `market_features` |
-| `make_split.py` | Phase 3 Dev/Holdout split |
-| `datastore.py` | Loads only the columns and rows a run needs; holds the Holdout lock |
-| `rules.py` | Universe filter, Trend Template, entry families. Shared with the future scanner |
-| `rules_short.py` | Short side: universe, downtrend template, market filter, setups S1-S5 |
-| `engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
-| `setup_short.py` | Short side Mode B: one setup vs S0 |
-| `spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
+| `core/` | Shared code every script imports: paths and defaults, data loading, rules, the two engines, flags, report tables, the research log |
+| `pipeline/` | Norgate to Parquet, features, the Dev/Holdout split |
+| `tools/` | Hand checks on the data |
+| `breakout/` | The breakout backtests: the long Trend Template, the short S1-S7 setups and the grid runner |
+| `reversion/` | The stretch study (mean reversion) |
+| `spike_short/` | The live gap-up short and its nightly scanner |
+| `tradingview/` | The gap-up short as a TradingView indicator, and how to screen for it |
+| `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
+| `crash_rebound/` | Crash rebound: returns after a big 1 or 3-day fall |
 | `crash_short/` | Short crashes that follow a run-up: the event study, then real trades with stops |
 | `crash_bounce/` | Short the relief rally after a crash, at a line known at the crash close; its nightly scanner and TradingView indicator |
-| `crash_rebound/` | Crash rebound: returns after a big 1 or 3-day fall |
-| `index_changes/` | S&P index changes: adds, drops and moves between indexes, returns vs the S&P |
-| `spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
-| `tradingview/` | The gap-up short as a TradingView indicator, and how to screen for it |
-| `filter_short.py` | Short side Mode A |
-| `reports.py` | Statistics and tables shared by the long and short scripts |
-| `engine.py` | Fill model, exits, F0 baseline, portfolio, metrics |
-| `params.py` | Turns every rule default into a CLI flag so `grid.py` keys map onto them |
-| `filter_test.py` | Mode A |
-| `setup_trend.py` | Modes B and C |
-| `grid.py` | Your grid runner, extended: windows, walk-forward report, holdout lock, research log |
-| `research_log.py` | Research log (plan 3.8) |
-| `show_data.py` | Raw-data lookups: one stock's bars and adjustment days (`--around DATE` for one trade), name search, delisted list |
-| `check_adjust.py` | One stock's closes around a date under each Norgate adjustment type |
-| `check_pinned.py` | Signal-day range of buyout-pinned trades vs the rest, to set a minimum-range filter |
-| `regime_test.py` | Candidate market regime indicators (dispersion, small vs large, IPOs, momentum spread, ...) vs a saved trade log |
-| `check_features.py` | Hand checks against TradingView |
+| `lockup_short/` | Lock-up expiry: new listings around the 180-day lock-up |
+| `tests/` | Tests for the shared code, the pipeline and the spike short |
+
+| File | Job |
+|---|---|
+| `core/config.py` | Paths, Norgate names, defaults (walk-forward lengths, min trades, costs) |
+| `core/datastore.py` | Loads only the columns and rows a run needs; holds the Holdout lock |
+| `core/rules.py` | Universe filter, Trend Template, entry families. Shared with the future scanner |
+| `core/rules_short.py` | Short side: universe, downtrend template, market filter, setups S1-S5 |
+| `core/engine.py` | Fill model, exits, F0 baseline, portfolio, metrics |
+| `core/engine_short.py` | Short side: fills, exits, borrow and dividends, S0 |
+| `core/params.py` | Turns every rule default into a CLI flag so `grid.py` keys map onto them |
+| `core/reports.py` | Statistics and tables shared by the long and short scripts |
+| `core/research_log.py` | Research log (plan 3.8) |
+| `pipeline/data_sources.py` | Norgate source and the synthetic source |
+| `pipeline/build_data.py` | Phase 1 |
+| `pipeline/build_features.py` | Phase 2. Writes `features`, `ranks`, `labels` (forward returns, Mode A only) and `market_features` |
+| `pipeline/make_split.py` | Phase 3 Dev/Holdout split |
+| `tools/show_data.py` | Raw-data lookups: one stock's bars and adjustment days (`--around DATE` for one trade), name search, delisted list |
+| `tools/check_adjust.py` | One stock's closes around a date under each Norgate adjustment type |
+| `tools/check_features.py` | Hand checks against TradingView |
+| `breakout/filter_test.py` | Mode A |
+| `breakout/setup_trend.py` | Modes B and C |
+| `breakout/filter_short.py` | Short side Mode A |
+| `breakout/setup_short.py` | Short side Mode B: one setup vs S0 |
+| `breakout/grid.py` | Your grid runner, extended: windows, walk-forward report, holdout lock, research log |
+| `breakout/check_pinned.py` | Signal-day range of buyout-pinned trades vs the rest, to set a minimum-range filter |
+| `breakout/regime_test.py` | Candidate market regime indicators (dispersion, small vs large, IPOs, momentum spread, ...) vs a saved trade log |
+| `reversion/reversion_test.py` | Stretch buckets and the spike and gap-up tables that led to the spike short |
+| `spike_short/spike_short.py` | Spike / gap-up blow-off shorts with stops, squeeze table, account test |
+| `spike_short/spike_scan.py` | Nightly scanner for the frozen gap-up short, plus the forward-test log |
+
+A new script in a folder finds the shared code by adding `core/` to its path before importing it, as
+every script here does:
+
+```
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+```
 
 ## Guard rails built in
 

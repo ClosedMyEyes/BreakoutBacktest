@@ -25,11 +25,11 @@ Statistics are by date, as in filter_test.py: average each bucket across
 stocks each day, then average those days; t-stats are Newey-West.
 
 HOW TO RUN:
-  python reversion_test.py                       # every measure, all years, Dev
-  python reversion_test.py --start 2010-01-01    # just the years that broke the breakouts
-  python reversion_test.py --measure rsi2        # the breakdown tables for another measure
-  python reversion_test.py --entry next_open
-  python reversion_test.py --start 2010-01-01 --spike-min 30   # the by-block spike table for 30%+ spikes
+  python reversion/reversion_test.py                       # every measure, all years, Dev
+  python reversion/reversion_test.py --start 2010-01-01    # just the years that broke the breakouts
+  python reversion/reversion_test.py --measure rsi2        # the breakdown tables for another measure
+  python reversion/reversion_test.py --entry next_open
+  python reversion/reversion_test.py --start 2010-01-01 --spike-min 30   # the by-block spike table for 30%+ spikes
                                                                # (and the gap-up by-year table for 30% runs)
 
 Spike table (the short side): the first day a stock is up 10 / 20 / 30 / 50% or more
@@ -46,16 +46,21 @@ qualifying day with no gap needed. Then by year for --spike-min.
 
 import argparse
 import json
+import os
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 
-import config
-import datastore
-import rules
-from params import add_param_flags, add_run_flags, collect
-from reports import tstat_overlap
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "core"))
+
+import config  # noqa: E402
+import datastore  # noqa: E402
+import rules  # noqa: E402
+from params import add_param_flags, add_run_flags, collect  # noqa: E402
+from reports import tstat_overlap  # noqa: E402
 
 MEASURES = ["move3", "rsi2", "ibs"]
 HORIZONS = [1, 3, 5, 10, 20]
@@ -433,7 +438,7 @@ def main():
         df = datastore.load_panel(cols, start=args.start, end=args.end, universe=args.universe,
                                   unlock_holdout=args.unlock_holdout, tail_days=35)
     except KeyError as e:
-        raise SystemExit(f"{e}. Run python build_data.py, then python build_features.py, and try again.")
+        raise SystemExit(f"{e}. Run python pipeline/build_data.py, then python pipeline/build_features.py, and try again.")
     df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
     codes = df["symbol"].cat.codes.to_numpy()
     market = pd.read_parquet(config.MARKET_FILE)
