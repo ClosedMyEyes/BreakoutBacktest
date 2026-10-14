@@ -11,9 +11,9 @@ after costs?
   history starts with the data, returns to an exchange (`SYMBOL~2`) and SPAC-like starts (printed close
   stuck at about $10) are left out. Spin-offs and OTC uplistings can't be told apart from IPOs.
 - **Day 0:** the first trading day 180 calendar days after the first bar (`--days 90` for short lock-ups).
-- **Trades:** short the close of day A, cover the close of day B, for every A in -10/-5/-3/-1/0 and B in
+- **Trades:** short the close of day A, cover the close of day B, for every A in -20/-10/-5/-3/-1/0 and B in
   0/1/3/5/10/20. The pick, set before the first run, is `-5:5`.
-- **Universe:** judged at the day -10 close: $5, top 80% by dollar volume, no recent price break.
+- **Universe:** judged at the day -20 close: $5, top 80% by dollar volume, no recent price break.
 - **Costs:** round trip plus 5%/yr borrow (`short`), the same hedged with the S&P (`hedged`), and at
   100%/yr borrow (`b100`).
 
@@ -23,3 +23,7 @@ python lockup_short/lockup_events.py --start 2010-01-01 --days 90
 python lockup_short/lockup_events.py --start 2010-01-01 --pick=-3:1 --sample 10
 python -m pytest lockup_short
 ```
+
+The run also prints a volatility check around day 0 and the pick split by size (price, dollar volume,
+listing-month dollar volume), run-up since listing and volume around day 0. Add
+`--min-price 1 --liq-top-pct 100` to include the small, thin stocks the default universe leaves out.
