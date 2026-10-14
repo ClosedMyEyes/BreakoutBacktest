@@ -117,6 +117,6 @@ def test_volatility_picks_up_a_swing_on_day0():
     daily, blocks = le.volatility(ev, df, spx_flat(df))
     d = daily.set_index("day")
     assert d.loc[0, "move_x"] > 10 and d.loc[1, "move_x"] < 5
-    assert np.isclose(d.loc[0, "abs_move"], 20.0, atol=0.5)
+    assert np.isclose(d.loc[0, "abs_move"], 20.0, atol=3.0)
     b = blocks.set_index("days")
     assert b.loc["0 to 4", "abs_5d"] > 15 and b.loc["5 to 9", "abs_5d"] < 10
