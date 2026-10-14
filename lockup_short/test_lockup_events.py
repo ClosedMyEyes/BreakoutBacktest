@@ -147,3 +147,19 @@ def test_young_stock_gets_a_liquidity_rank_from_its_days_so_far():
     assert np.isnan(df["dv_pct"].iloc[r])
     assert filled[r] == 100.0                      # $50k a day beats OLD's $10k
     assert np.isclose(le.young_dv(df, np.array([r]), np.array([f]))[0], 50_000.0)
+
+
+def test_min_dv_keeps_only_liquid_listings():
+    thin = toy("THN", "2011-03-01", np.full(200, 20.0))
+    busy = toy("BSY", "2011-03-01", np.full(200, 20.0))
+    df, codes = panel(thin, busy)
+    df["volume"] = np.where(df["symbol"] == "THN", 10_000.0, 2_000_000.0)    # $0.2M vs $40M a day
+    df["turnover"] = df["close"] * df["volume"]
+    df["dv50"] = df.groupby("symbol", observed=True)["turnover"].transform(
+        lambda x: x.rolling(50, min_periods=50).mean())
+    df["dv_pct"], df["listed"], df["tight_10"], df["bars_since_break"] = 50.0, 1, 0.1, np.nan
+    P = {"min_price": 5.0, "liq_top_pct": 80.0}
+    ev, *_ = le.select_events(df, codes, P, 180, pd.Timestamp("2010-01-01"), "drop", None, None)
+    assert sorted(ev["symbol"]) == ["BSY", "THN"]
+    ev, *_ = le.select_events(df, codes, P, 180, pd.Timestamp("2010-01-01"), "drop", None, None, min_dv=20)
+    assert list(ev["symbol"]) == ["BSY"]
