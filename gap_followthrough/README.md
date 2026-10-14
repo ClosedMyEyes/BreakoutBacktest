@@ -22,6 +22,7 @@ caps since 2010. Does going with the gap still pay after costs?
 python gap_followthrough/gap_events.py --start 2010-01-01
 python gap_followthrough/gap_events.py --start 2010-01-01 --pick open:20 --sample 10
 python gap_followthrough/gap_events.py --start 2010-01-01 --size sp500
+python gap_followthrough/gap_events.py --start 2010-01-01 --only move20:0:10
 python -m pytest gap_followthrough
 ```
 
@@ -29,6 +30,24 @@ The run prints a day-by-day profile around the up and down gaps, every entry and
 direction, and the pick split by gap size, volume, S&P index, price, dollar volume, what the stock did
 after the open on day 0, its 60-day move before the gap, and the stock and the S&P against their 200-day
 averages. Then the pick by 5-year block and by year.
+
+## First Dev run (since 2010) and what was added after it
+
+17,698 gaps, about 516 up and 540 down a year. The pick, in at the day 0 close and out at the close of
+day 20, had no edge either way after costs: buying up gaps -0.04% a trade (hedged -0.84%, t -2.6, 7 of 17
+years up), shorting down gaps -1.42% (hedged -0.53%, 2 of 17 years up). There was no drift after the day 0
+close. The day itself moved on from the open (+1.2% for up gaps, +1.5% for down gaps), but the 3x volume is
+only known at the close. Two tables were added, both read as context since the pick failed:
+
+- **Day 0 from the open:** in at the day 0 open, out at the close of day 0, 1, 5 or 20, on every 5%+ gap
+  with no volume rule (all known at the open) next to the 3x events (flattered, since their volume is
+  only known at the close).
+- **Lead-up:** the pick by what the stock did in the 10-30 days to the prior close: the 10-, 20- and 30-day
+  move in the gap's direction, the 20-day high-low range, the last 10 days' volume against the usual, and
+  the distance from the 52-week high (up gaps) or low (down gaps). These are 34 buckets a side on a base
+  with no edge, so a bucket is worth a follow-up only if it turns the sign and holds in every 5-year block.
+  `--only move20:0:10` (any lead-up column, lower bound included, upper left out) reruns everything on one
+  bucket, which shows it by block and by year.
 
 Lessons carried over from the earlier studies: short-term edges shrank a lot after 2010 (reversion,
 breakouts), a 3-day crash of 30%+ kept falling (crash short, so the down-gap side may overlap it), and
