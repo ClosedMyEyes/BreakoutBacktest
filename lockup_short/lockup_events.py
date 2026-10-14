@@ -32,7 +32,7 @@ shows up here because build_data.py drops OTC bars.
   pick    stated before the first run: short the close of day -5, cover the close
           of day +5 (10 days)
 
-The universe is judged at the close of day -10, before any entry: $5 printed
+The universe is judged at the close of day -20, before any entry: $5 printed
 close, the top 80% by 50-day dollar volume, no recent price break, not pinned.
 A stock that stops trading inside a window covers at its last close. A window
 across a downward price break is left out (an untrusted gain for a short); an
@@ -51,6 +51,16 @@ HOW TO RUN:
   python lockup_short/lockup_events.py --start 2010-01-01 --days 90
   python lockup_short/lockup_events.py --start 2010-01-01 --pick=-3:1 --sample 10   (the = is needed before a minus)
   python lockup_short/lockup_events.py --start 2010-01-01 --spacs keep
+  python lockup_short/lockup_events.py --start 2010-01-01 --min-price 1 --liq-top-pct 100   # small caps too
+
+The pick's table splits it by size and liquidity at the day -20 close (price, 50-day
+dollar volume, dollar volume in the listing month as a stand-in for size at the IPO;
+the data has no market caps), by the move since listing, and by volume around day 0
+after the fact, next to the wider windows -20:0, 0:20 and -20:20.
+
+The VOLATILITY tables (after the day-by-day profile) ask whether stocks swing more
+around day 0 in either direction: the size of daily moves, ranges and gaps, and
+5-day blocks from day -60 to +40, each against the stock's own usual.
 """
 
 import argparse
@@ -73,11 +83,17 @@ from params import add_param_flags, collect  # noqa: E402
 import crash_events as ce  # noqa: E402
 
 LOCKUP_DAYS = 180
-ENTRIES = [-10, -5, -3, -1, 0]       # short at the close of this day
+ENTRIES = [-20, -10, -5, -3, -1, 0]  # short at the close of this day
 EXITS = [0, 1, 3, 5, 10, 20]         # cover at the close of this day
 PICK = "-5:5"
 PROFILE = range(-15, 21)             # days shown in the day-by-day profile
-UNIVERSE_DAY = min(ENTRIES)          # universe judged at this day's close
+UNIVERSE_DAY = min(ENTRIES)          # universe and size buckets judged at this day's close
+SIDE_WINDOWS = [(-20, 0), (0, 20), (-20, 20)]   # also shown (hedged) in the size table
+PRICE_BINS = [0, 2, 5, 10, 20, 50, np.inf]               # printed price, $
+DV_BINS = [0, 0.5, 2, 5, 20, 100, np.inf]                # dollar volume, $M a day
+RUN_BINS = [-100, -50, -20, 0, 25, 100, np.inf]          # % move since the first close
+SPIKE_BINS = [0, 1, 2, 4, np.inf]                        # volume around day 0 vs usual
+IPO_BARS = 20                                            # the listing month, for size at listing
 VOL_BASE = (-60, -21)                # rows for the stock's usual volume
 DATA_START_GRACE = 30                # first bar this close to the data start = not a listing
 SPAC_BARS, SPAC_LO, SPAC_HI, SPAC_SHARE = 20, 9.5, 10.5, 0.9
@@ -224,6 +240,89 @@ def profile(ev, df, spx):
     return pd.DataFrame(rows)
 
 
+VOL_OFFSETS = np.arange(-60, 41)     # days covered by the volatility check
+VOL_DAILY = range(-10, 11)           # days shown one by one
+VOL_BLOCK = 5                        # then in 5-day blocks over all of VOL_OFFSETS
+BIG_DAY, BIG_BLOCK = 5.0, 15.0       # % moves vs the S&P counted as big
+
+
+def daily_matrix(ev, df, spx, offsets=VOL_OFFSETS):
+    """Per event (rows) and day offset (columns): the day's move vs the S&P, its
+    high-low range and its opening gap, all in % of the prior close. NaN outside the
+    stock's life and on price-break days."""
+    c = df["close"].to_numpy(np.float64)
+    o = df["open"].to_numpy(np.float64)
+    h = df["high"].to_numpy(np.float64)
+    lo = df["low"].to_numpy(np.float64)
+    brk = ((df["bad_bar_dn"].fillna(0) > 0) | (df["bad_bar"].fillna(0) > 0)).to_numpy()
+    pos = spx.index.get_indexer(pd.DatetimeIndex(df["date"].to_numpy()))
+    sc = spx.to_numpy()
+    r, first, last = ev["row"].to_numpy(), ev["first"].to_numpy(), ev["last"].to_numpy()
+    shape = (len(r), len(offsets))
+    x, rng, gap = np.full(shape, np.nan), np.full(shape, np.nan), np.full(shape, np.nan)
+    for k, d in enumerate(offsets):
+        j = r + d
+        ok = (j - 1 >= first) & (j <= last)
+        jj, ii = np.where(ok, j, r), np.where(ok, j - 1, r)
+        pi, pj = pos[ii], pos[jj]
+        sp = np.where((pi >= 0) & (pj >= 0), sc[np.maximum(pj, 0)] / sc[np.maximum(pi, 0)] - 1, np.nan)
+        ok &= ~brk[jj] & (c[ii] > 0)
+        x[:, k] = np.where(ok, (c[jj] / c[ii] - 1 - sp) * 100, np.nan)
+        rng[:, k] = np.where(ok, (h[jj] - lo[jj]) / c[ii] * 100, np.nan)
+        gap[:, k] = np.where(ok, np.abs(o[jj] / c[ii] - 1) * 100, np.nan)
+    return x, rng, gap
+
+
+def volatility(ev, df, spx, offsets=VOL_OFFSETS):
+    """Does the stock swing more around day 0, either way? Returns (daily, blocks).
+    Each stock's usual is its own average over days VOL_BASE (before the run-up to day 0).
+    daily: one row per day in VOL_DAILY. blocks: 5-day blocks over all offsets."""
+    x, rng, gap = daily_matrix(ev, df, spx, offsets)
+    ax = np.abs(x)
+    base = (offsets >= VOL_BASE[0]) & (offsets <= VOL_BASE[1])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        usual_abs = np.nanmean(ax[:, base], axis=1)
+        usual_rng = np.nanmean(rng[:, base], axis=1)
+        usual_sd = np.sqrt(np.nanmean(x[:, base] ** 2, axis=1))
+    usual_abs[usual_abs <= 0] = np.nan
+    usual_rng[usual_rng <= 0] = np.nan
+    usual_sd[usual_sd <= 0] = np.nan
+
+    def pct(a):
+        a = a[np.isfinite(a)]
+        return a.mean() * 100 if len(a) else np.nan
+
+    rows = []
+    for d in VOL_DAILY:
+        k = int(np.flatnonzero(offsets == d)[0])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            rows.append({"day": d, "abs_move": np.nanmean(ax[:, k]),
+                         "move_x": np.nanmean(ax[:, k] / usual_abs),
+                         "range": np.nanmean(rng[:, k]),
+                         "range_x": np.nanmean(rng[:, k] / usual_rng),
+                         "gap": np.nanmean(gap[:, k]),
+                         f"big{BIG_DAY:g}_%": pct(np.where(np.isfinite(ax[:, k]), ax[:, k] >= BIG_DAY, np.nan))})
+    daily = pd.DataFrame(rows)
+
+    rows = []
+    for start in range(int(offsets[0]), int(offsets[-1]) - VOL_BLOCK + 2, VOL_BLOCK):
+        cols = (offsets >= start) & (offsets < start + VOL_BLOCK)
+        xs = x[:, cols]
+        full = np.isfinite(xs).all(axis=1)
+        tot = np.where(full, (np.prod(1 + np.nan_to_num(xs) / 100, axis=1) - 1) * 100, np.nan)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            sd = np.where(full, np.sqrt(np.nanmean(xs ** 2, axis=1)), np.nan)
+            rows.append({"days": f"{start} to {start + VOL_BLOCK - 1}",
+                         "events": int(full.sum()),
+                         "sd_5d": np.nanstd(tot),
+                         "abs_5d": np.nanmean(np.abs(tot)),
+                         f"big{BIG_BLOCK:g}_%": pct(np.where(full, np.abs(tot) >= BIG_BLOCK, np.nan)),
+                         "vol_x": np.nanmean(sd / usual_sd),
+                         "range_x": np.nanmean(np.nanmean(rng[:, cols], axis=1) / usual_rng),
+                         "avg_5d": np.nanmean(tot)})
+    return daily, pd.DataFrame(rows)
+
+
 def stats(g, name, years):
     out = {"events": len(g), "per_yr": len(g) / years}
     s = g[f"short_{name}"].dropna()
@@ -241,46 +340,95 @@ def stats(g, name, years):
     return out
 
 
-def entry_features(ev, df, spx_above200, a):
-    """What is known at the entry close (day a), for the split table."""
+def entry_features(ev, df, spx_above200, a=UNIVERSE_DAY):
+    """What is known at the close of day a (day -20 by default, before any entry in
+    the grid), for the size table, plus one after-the-fact column (spike_x)."""
     c = df["close"].to_numpy(np.float64)
     u = df["unadj_close"].to_numpy(np.float64)
-    r, first = ev["row"].to_numpy(), ev["first"].to_numpy()
+    vol = df["volume"].to_numpy(np.float64)
+    tv = df["turnover"].to_numpy(np.float64) if "turnover" in df else c * vol
+    tv = np.where(np.isfinite(tv), tv, c * vol)
+    r, first, last = ev["row"].to_numpy(), ev["first"].to_numpy(), ev["last"].to_numpy()
     i = r + a
     ev["price"] = u[i]
     ev["since_listing"] = (c[i] / c[first] - 1) * 100
     ev["move20"] = np.where(i - 20 >= first, (c[i] / c[np.maximum(i - 20, 0)] - 1) * 100, np.nan)
     ev["dv50_m"] = df["dv50"].to_numpy(np.float64)[i] / 1e6
+    ipo_dv, ipo_vol, usual, spike = (np.full(len(r), np.nan) for _ in range(4))
+    for k in range(len(r)):
+        f = first[k]
+        ipo_dv[k] = np.nanmean(tv[f:f + IPO_BARS]) / 1e6
+        ipo_vol[k] = np.nanmean(vol[f:f + IPO_BARS])
+        lo, hi = r[k] + VOL_BASE[0], r[k] + VOL_BASE[1]
+        if lo >= f:
+            usual[k] = np.nanmean(vol[lo:hi + 1])
+        spike[k] = np.nanmax(vol[max(r[k] - 1, f):min(r[k] + 1, last[k]) + 1])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ev["ipo_dv_m"] = ipo_dv
+        ev["dried"] = usual / ipo_vol
+        ev["spike_x"] = spike / usual
     ev["in_sp"] = (df[["in_sp500", "in_sp400", "in_sp600"]].to_numpy()[i].max(axis=1) > 0)
     d = pd.DatetimeIndex(df["date"].to_numpy()[i])
     ev["spx_above200"] = spx_above200.reindex(d).to_numpy()
     return ev
 
 
-def split_table(g, name, years):
-    rows = [{"split": "all", **stats(g, name, years)}]
+def bins_of(v, edges, fmt):
+    """(label, mask) for each fixed bin [lo, hi) of v. The first bin is 'under hi'
+    (its low edge is a floor, 0 or -100%), the last 'lo+'."""
+    out = []
+    for k, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+        if k == 0:
+            label = f"under {fmt(hi)}"
+        elif not np.isfinite(hi):
+            label = f"{fmt(lo)}+"
+        else:
+            label = f"{fmt(lo)} to {fmt(hi)}"
+        out.append((label, ((v >= lo) & (v < hi)).to_numpy()))
+    return out
 
-    def add(label, mask):
-        rows.append({"split": label, **stats(g.loc[np.asarray(mask, dtype=bool)], name, years)})
 
-    for col, label in [("since_listing", "move since the first close %"),
-                       ("move20", "20-day move into the entry %"),
-                       ("price", "price $"), ("dv50_m", "50-day $ volume ($M/day)")]:
-        v = g[col]
-        if v.notna().sum() < 6:
-            continue
-        lo, hi = v.quantile(1 / 3), v.quantile(2 / 3)
-        add(f"{label} low third (< {lo:.1f})", v < lo)
-        add(f"{label} middle third", (v >= lo) & (v < hi))
-        add(f"{label} high third (>= {hi:.1f})", v >= hi)
-    add("up since the first close", g["since_listing"] > 0)
-    add("down since the first close", g["since_listing"] <= 0)
-    add("S&P above its 200-day", g["spx_above200"] == 1)
-    add("S&P below its 200-day", g["spx_above200"] == 0)
-    add("in an S&P index", g["in_sp"])
+def thirds_of(v):
+    lo, hi = v.quantile(1 / 3), v.quantile(2 / 3)
+    return [(f"low third (< {lo:.2f})", (v < lo).to_numpy()),
+            ("middle third", ((v >= lo) & (v < hi)).to_numpy()),
+            (f"high third (>= {hi:.2f})", (v >= hi).to_numpy())]
+
+
+def size_table(g, name, years):
+    """The pick and the wider windows (SIDE_WINDOWS, hedged) by size, liquidity,
+    run-up and the other things known at the day -20 close."""
+    side = [f"{a}:{b}" for a, b in SIDE_WINDOWS]
+
+    def row(group, label, mask):
+        s = g.loc[np.asarray(mask, dtype=bool)]
+        st = stats(s, name, years)
+        out = {"group": group, "bucket": label, "events": st["events"], "per_yr": st["per_yr"]}
+        for k in ["short", "hedged", "b100", "win_%", "hit25_%", "t_hedged"]:
+            out[k] = st.get(k, np.nan)
+        for w in side:
+            out[f"hedged_{w}"] = s[f"hedged_{w}"].mean() if len(s) else np.nan
+        return out
+
+    money = lambda x: f"${x:g}"
+    rows = [row("all", "", np.ones(len(g), dtype=bool))]
+    groups = [("price at day -20", bins_of(g["price"], PRICE_BINS, money)),
+              ("$ volume, $M/day (50-day)", bins_of(g["dv50_m"], DV_BINS, money)),
+              ("$ volume in the listing month, $M/day", bins_of(g["ipo_dv_m"], DV_BINS, money)),
+              ("move since the first close %", bins_of(g["since_listing"], RUN_BINS, lambda x: f"{x:g}%")),
+              ("20-day move into day -20 %", thirds_of(g["move20"])),
+              ("volume now vs the listing month", thirds_of(g["dried"])),
+              ("after the fact: volume on days -1 to +1 vs usual",
+               bins_of(g["spike_x"], SPIKE_BINS, lambda x: f"{x:g}x")),
+              ("market", [("S&P above its 200-day", (g["spx_above200"] == 1).to_numpy()),
+                          ("S&P below its 200-day", (g["spx_above200"] == 0).to_numpy()),
+                          ("in an S&P index", g["in_sp"].to_numpy())])]
     if g["spac_like"].any():
-        add("SPAC-like start", g["spac_like"])
-        add("not SPAC-like", ~g["spac_like"])
+        groups.append(("start", [("SPAC-like", g["spac_like"].to_numpy()),
+                                 ("not SPAC-like", (~g["spac_like"]).to_numpy())]))
+    for group, buckets in groups:
+        for label, mask in buckets:
+            rows.append(row(group, label, mask))
     return pd.DataFrame(rows)
 
 
@@ -308,7 +456,7 @@ def main():
     pa_, pb = parse_pick(args.pick)
 
     t0 = time.time()
-    cols = (rules.universe_columns(P) + ["high", "close", "volume", "dv50", "bad_bar", "bad_bar_dn",
+    cols = (rules.universe_columns(P) + ["open", "high", "low", "close", "volume", "turnover", "dv50", "bad_bar", "bad_bar_dn",
                                          "in_sp500", "in_sp400", "in_sp600"])
     try:
         # Full history: the first bar decides day 0, however long before --start it was
@@ -361,6 +509,18 @@ def main():
     print("A volume bump near day 0 means the date lines up with real lock-up selling.")
     print(profile(ev, df, spx).round(2).to_string(index=False))
 
+    vd, vb = volatility(ev, df, spx)
+    print(f"\nVOLATILITY around day 0: does the stock swing more, either way? All in % vs the S&P. _x columns "
+          f"= against the stock's own usual (days {VOL_BASE[0]} to {VOL_BASE[1]}), about 1 when nothing changes "
+          f"and 1.3 for 30% bigger. New listings calm down as they age, so compare day 0 with the days either side.")
+    print(f"  abs_move = average size of the day's move; range = high-low; gap = size of the opening gap; "
+          f"big{BIG_DAY:g}_% = share of days moving {BIG_DAY:g}%+ either way.")
+    print(vd.round(2).to_string(index=False))
+    print(f"\n  5-day blocks: sd_5d / abs_5d = spread and average size of the 5-day move across stocks; "
+          f"big{BIG_BLOCK:g}_% = share moving {BIG_BLOCK:g}%+ either way; vol_x = daily volatility (root mean square move) vs usual; "
+          f"avg_5d = average move (direction).")
+    print(vb.round(2).to_string(index=False))
+
     grid = [(a, b) for a in ENTRIES for b in EXITS if b > a]
     if (pa_, pb) not in grid:
         grid.append((pa_, pb))
@@ -375,10 +535,15 @@ def main():
     print(pd.DataFrame(rows).round(2).to_string(index=False))
 
     name = f"{pa_}:{pb}"
-    ev = entry_features(ev, df, spx200, pa_)
+    ev = entry_features(ev, df, spx200)
     pick = ev[ev[f"short_{name}"].notna()].reset_index(drop=True)
-    print(f"\nPICK: short the close of day {pa_}, cover the close of day {pb} ({len(pick)} trades).")
-    print(split_table(pick, name, years).round(2).to_string(index=False))
+    print(f"\nPICK: short the close of day {pa_}, cover the close of day {pb} ({len(pick)} trades), by what was "
+          f"known at the day {UNIVERSE_DAY} close. short / hedged / b100 / win / hit25 / t_hedged are the pick; "
+          f"the hedged_A:B columns are the stock vs the S&P (short side, after costs) over the whole run-up "
+          f"(-20:0), the drift after (0:20) and both (-20:20). The listing month's $ volume stands in for size "
+          f"at the IPO (the data has no market caps). 'After the fact' rows use volume around day 0, which isn't "
+          f"known at entry: they show whether heavy selling days fall more, not a filter.")
+    print(size_table(pick, name, years).round(2).to_string(index=False))
 
     pick["block"] = ce.block_of(pick["date"])
     show = ["events", "short", "hedged", "b100", "med", "win_%", "hit25_%", "t"]
@@ -405,7 +570,7 @@ def main():
 
     if args.save_events:
         keep_cols = ["symbol", "listed_on", "date", "bars_listed", "spac_like", "price", "since_listing",
-                     "move20", "dv50_m"] + [f"short_{a}:{b}" for a, b in grid] + [f"hedged_{name}"]
+                     "move20", "dv50_m", "ipo_dv_m", "dried", "spike_x"] + [f"short_{a}:{b}" for a, b in grid] + [f"hedged_{name}"]
         ev[keep_cols].to_csv(args.save_events, index=False)
         print(f"\nSaved {len(ev)} events to {args.save_events}")
 

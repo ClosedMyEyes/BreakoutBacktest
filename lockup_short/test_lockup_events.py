@@ -103,3 +103,29 @@ def test_parse_pick():
         except ValueError:
             continue
         raise AssertionError(bad)
+
+
+def test_volatility_picks_up_a_swing_on_day0():
+    rng = np.random.default_rng(1)
+    c = 20 * np.cumprod(1 + rng.normal(0, 0.01, 260))
+    df, codes = panel(toy("IPO", "2011-03-01", c))
+    df["open"], df["low"] = df["close"], df["close"]
+    ev, _ = le.find_events(df, codes, 180, pd.Timestamp("2010-01-01"))
+    r = ev["row"].iloc[0]
+    df.loc[r:, "close"] *= 1.2                                 # +20% on day 0 only
+    df["high"], df["open"], df["low"] = df["close"], df["close"], df["close"]
+    daily, blocks = le.volatility(ev, df, spx_flat(df))
+    d = daily.set_index("day")
+    assert d.loc[0, "move_x"] > 10 and d.loc[1, "move_x"] < 5
+    assert np.isclose(d.loc[0, "abs_move"], 20.0, atol=3.0)
+    b = blocks.set_index("days")
+    assert b.loc["0 to 4", "abs_5d"] > 15 and b.loc["5 to 9", "abs_5d"] < 10
+
+
+def test_bins_label_and_split_every_value_once():
+    v = pd.Series([0.5, 2.0, 7.0, 60.0, np.nan])
+    b = le.bins_of(v, le.PRICE_BINS, lambda x: f"${x:g}")
+    labels = [lab for lab, _ in b]
+    assert labels[0] == "under $2" and labels[-1] == "$50+" and "$5 to $10" in labels
+    hits = np.sum([m for _, m in b], axis=0)
+    assert list(hits) == [1, 1, 1, 1, 0]
