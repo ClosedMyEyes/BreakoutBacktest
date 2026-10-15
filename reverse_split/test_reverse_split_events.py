@@ -16,7 +16,7 @@ def toy(symbol, n=300, price=4.0):
     c = np.full(n, price)
     return pd.DataFrame({"symbol": symbol, "date": pd.bdate_range("2012-01-02", periods=n), "open": c.copy(),
                          "high": c.copy(), "low": c.copy(), "close": c.copy(), "unadj_close": c.copy(),
-                         "volume": 1e6, "turnover": 4e6, "listed": 1, "dv_pct": 90.0, "tight_10": 0.1,
+                         "volume": 1e6, "turnover": 4e6, "div": 0.0, "listed": 1, "dv_pct": 90.0, "tight_10": 0.1,
                          "bars_since_break": np.nan, "bad_bar": 0, "bad_bar_dn": 0, "dv50": 4e6, "sma200": price,
                          "sma50": price, "hi52_c": price, "in_sp500": 0, "in_sp400": 0, "in_sp600": 0, "in_r2000": 0})
 
@@ -418,3 +418,80 @@ def test_combined_puts_both_frozen_rules_in_one_account(capsys):
     assert np.isclose(out["ret"].iloc[0], r1) and np.isclose(out["ret"].iloc[1], r2)
     assert np.isclose(out["x_start"].iloc[2], 1 + 0.02 * r1 / 100 + 0.02 * (1 + 0.02 * r1 / 100) * r2 / 100)
     assert "1 of the 1 20-80 shorts follow a 0-20 short" in capsys.readouterr().out
+
+
+def test_next_open_shorts_after_the_close_it_is_decided_on_and_mark_open_keeps_a_trade_at_the_data_end():
+    df, codes = panel(toy("A", n=400), toy("LIVE", n=400))
+    r, live = start_of(df, "A") + 80, start_of(df, "LIVE") + 380
+    reverse_split(df, r, 30)
+    reverse_split(df, live, 30)
+    df.loc[r + 21, "open"] = 5.0                                      # the day 21 open, above the day 20 close
+    df.loc[live + 5:live + 19, ["open", "high", "low", "close"]] = 3.0
+    ev = events(df, codes)
+    mkt = market(df)
+    a, b = rs.trades(ev, df, mkt, "close0", 20, next_open=True), rs.trades(ev, df, mkt, "open1", 20)
+    assert all(np.allclose(a[k], b[k.replace("close0", "open1")], equal_nan=True) for k in a)
+    x = rs.trades(ev, df, mkt, "close20", 60, next_open=True)
+    assert x["exit_close20:60"][0] == r + 80 and x["px_close20:60"][0] == 5.0
+    assert np.isclose(x["g_close20:60"][0], -(4.0 / 5.0 - 1) * 100 - rs.ce.round_trip_cost())
+    assert np.isclose(x["y_close20:60"][0], 60 / 252)
+    run, marked = rs.trades(ev, df, mkt, "close0", 60), rs.trades(ev, df, mkt, "close0", 60, mark_open=True)
+    assert np.isnan(run["g_close0:60"][1]) and marked["exit_close0:60"][1] == live + 19
+    assert np.isclose(marked["g_close0:60"][1], 25.0 - rs.ce.round_trip_cost())
+    assert np.isclose(marked["y_close0:60"][1], 19 / 252) and marked["del_close0:60"][1] == 0.0
+    assert np.isclose(marked["g_close0:60"][0], run["g_close0:60"][0])
+
+
+def test_real_costs_charge_the_commission_at_the_printed_price_dividends_and_every_market_day():
+    df, codes = panel(toy("S"))
+    r = start_of(df, "S") + 80
+    reverse_split(df, r, 30)
+    df.loc[r + 5, "div"] = 0.04                                       # 1% of the $4 price, ex on day 5
+    df.loc[r + 25, "div"] = 0.04                                      # after the cover: not charged
+    mkt = market(df)
+    gap = df.index[r + 10]
+    df = df.drop(index=gap).reset_index(drop=True)                    # no bar on one market day in the hold
+    codes = df["symbol"].astype("category").cat.codes.to_numpy()
+    ev = rs.features(events(df, codes), df, pd.Series(1.0, index=mkt.index), market_features(df), mkt)
+    run = rs.frozen_trades(ev, df, mkt, "0-20", 50.0)
+    real = rs.frozen_trades(ev, df, mkt, "0-20", 50.0, real_cost=True)
+    cost = 2 * rs.AUDIT_SLIP + 2 * rs.config.COMMISSION_PER_SHARE / 4.0 * 100
+    assert np.isclose(real["cost_%"].iloc[0], cost) and np.isclose(real["div_%"].iloc[0], 1.0)
+    g = -rs.ce.round_trip_cost()                                      # flat, so the short is just its cost
+    assert np.isclose(run["short_0:1000000"].iloc[0], g - 50 * 20 / 252)
+    assert np.isclose(real["short_0:1000000"].iloc[0], -cost - 1.0 - 50 * 21 / 252)
+
+
+def test_a_short_at_the_open_is_sized_on_the_account_at_the_close_before():
+    df, codes = panel(toy("A"), toy("B"))
+    a0, b0 = start_of(df, "A"), start_of(df, "B")
+    df.loc[a0 + 101:a0 + 299, ["open", "high", "low", "close"]] = 3.0   # A's short gains 25% on day 101
+    spx = market(df)["spx_close"]
+    g = pd.DataFrame({"row": [a0 + 100, b0 + 101], "last": [a0 + 120, b0 + 120], "entry_px": [4.0, 4.0],
+                      "at_open": [False, True], "short_0:5": [25.0, 0.0]})      # B opens on day 101, flat
+    alone, _ = rs.account_sized(g.iloc[:1], df, spx, 0, 5, 2.0, 0.0, np.ones(1))
+    at_open, _ = rs.account_sized(g, df, spx, 0, 5, 2.0, 0.0, np.ones(2))
+    at_close, _ = rs.account_sized(g.assign(at_open=False), df, spx, 0, 5, 2.0, 0.0, np.ones(2))
+    mark = -rs.ce.round_trip_cost() / 2 / 100                          # B's mark while open: half the round trip
+    for curve, sized_on in [(at_open, alone["equity"].iloc[0]), (at_close, alone["equity"].iloc[1])]:
+        assert np.isclose(curve["equity"].iloc[2] - alone["equity"].iloc[2], 0.02 * sized_on * mark)
+    assert np.isclose(at_open["equity"].iloc[-1], 1 + 0.02 * 25.0 / 100)   # B covers at 0, whatever its size
+
+
+def test_audit_runs_each_frozen_rule_as_run_and_with_each_shortcut_out(capsys):
+    df, codes = panel(toy("S"))
+    r = start_of(df, "S") + 80
+    reverse_split(df, r, 30)
+    df.loc[r + 5, "high"] = 6.0
+    df.loc[r + 6:, ["open", "high", "low", "close", "unadj_close"]] = 3.0
+    mkt = market(df)
+    ev = rs.features(events(df, codes), df, pd.Series(1.0, index=mkt.index), market_features(df), mkt)
+    ev = rs.entry_features(ev, df, 20, market_features(df))
+    out = rs.audit(ev, df, mkt, 50.0, 2.0, {"bad prints (undone within 5 bars)": 0})
+    assert len(out) == len(rs.AUDIT) * 3 and out["rules"].tolist()[:len(rs.AUDIT)] == ["0-20"] * len(rs.AUDIT)
+    both = rs.combined(ev, df, mkt, 50.0, [2.0])
+    run = out[out["audit"] == "as run"].set_index("rules")
+    assert np.allclose(run["ret"], both.set_index("rules")["ret"]) and np.allclose(run["cagr_%"],
+                                                                                  both.set_index("rules")["cagr_%"])
+    text = capsys.readouterr().out
+    assert "left out 0 split(s)" in text and "0-20: 0 trade(s) still open" in text

@@ -7,7 +7,8 @@ The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account 
 splits, which cut the locked half's worst drop from 40% to 22% (set after the run). See "Holdout result" at
 the end. **The day 20 to 80 short passed its own holdout run too** (+15.15% a trade, t 2.29, 5 a year, about
 half its Dev result) **and was locked the same day at the same size;** its checklist is under "How to trade
-it".
+it". A read of the code for look-ahead found none in what picks the trades; `--audit` measures the shortcuts
+that could still flatter the results (see "Audit" at the end).
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -349,8 +350,9 @@ short on the same split (136 of 136 on Dev, 84 of 84 on the locked half). At 2% 
 
 The drops don't stack: the 0-20 shorts were making money while FLZH spiked. The yearly rate over 2010-26
 undersells the account now. Almost every trade is from 2022 on, when reverse splits became common, so the
-years before sit near zero. If they stay as common as in 2023-25, plan on about 20% a year from both shorts
-at 2% (the locked half's years), with a drop of about 26%. 2026 to September was +3.7% (FLZH and DFNS). At
+years before sit near zero. If they stay as common as in 2022-26, plan on about 17% a year from both shorts
+at 2% (the locked half's 2022 to 2026 average; 2023-25 alone made about 23%, which is the best stretch, not
+the plan), with a drop of about 26%, before the audit below. 2026 to September was +3.7% (FLZH and DFNS). At
 5% a short the locked half would have been 228% short at the peak, so 2% is the size.
 
 ## The day 20 to 80 short (frozen 2026-10-15, then run once on the holdout)
@@ -447,3 +449,51 @@ new rule, so it can run on both halves:
 python reverse_split/reverse_split_events.py --start 2010-01-01 --combined
 python reverse_split/reverse_split_events.py --start 2010-01-01 --combined --universe holdout --unlock-holdout
 ```
+
+## Audit: look-ahead and shortcuts that could flatter the results (2026-10-15)
+
+After both holdout runs, the code was read end to end for anything that uses information from after the
+decision or makes the shorts look better than they could be traded.
+
+**No look-ahead found** in what picks the trades:
+
+- Index membership (S&P 500/400/600, Russell 2000) and the major-exchange flag are Norgate's day-by-day
+  history, so day 0 uses the membership on day 0. Delisted stocks are in the data.
+- The split is found from the change in Norgate's adjustment factor between day -1 and day 0, which only
+  moves with an event on day 0. The ratio filter uses that day's jump. The $1 floor uses the printed price.
+- Liquidity (50-day $ volume and its rank across listed stocks), the 252-bar price-break block (judged at
+  day -1), the pinned-stock check, the dedupe (earlier splits only) and the earlier-split count all use bars
+  up to day 0. The S&P's 200-day is a trailing average of its closes.
+- The day 20 filters (25%+ below the high since day 0, $1+ printed, the S&P) use bars up to the day 20
+  close, and the $1M+ a day filter uses day 0.
+- The account sizes each short on the account's value at its entry and marks every open short at each close.
+- The Dev and holdout halves are split by company with a fixed seed, before any results were seen.
+
+One step does read later bars: a factor jump undone within 5 bars counts as a bad print, not a split. It
+left out 0 splits in every run so far. Two things work against the shorts and stay as they are: a hold
+across a downward price break is left out (an untrusted gain for a short), and a stock that stops trading is
+covered at its last exchange close.
+
+**What could flatter them**, and `--audit` measures each one on the two frozen rules, each alone and both in
+one account at 2% a short (1-for-100+ at 1%):
+
+- **Trades still open when the data ends are left out.** 17 of the 101 day 20 to 80 shorts on the locked
+  half were, all from mid-2026, a year that was going badly. `open marked` covers them at the last close.
+- **Costs.** The 0.50% round trip charges commission as if the stock were $10 and 0.2% slippage a side.
+  `real costs` charges $0.005 a share at the stock's own printed price, 0.5% slippage a side, the ordinary
+  dividends going ex while short, and the borrow for every market day held, not just the stock's bars.
+- **The close the rule is decided on is the close it trades.** Both rules are checked a few minutes before
+  the close, so a borderline stock can pass at 3:50pm and fail at the close, or the reverse. `next open`
+  shorts at the next open instead, with the same cover: the worst case for that.
+- **Planning numbers.** The Dev results were picked from many tries, so the holdout's are the ones to plan
+  on. The 1-for-100+ half size was picked after the 0-20 holdout run.
+
+```
+python reverse_split/reverse_split_events.py --start 2010-01-01 --audit
+python reverse_split/reverse_split_events.py --start 2010-01-01 --audit --universe holdout --unlock-holdout
+```
+
+It changes no rule, so it can run on both halves. The table has trades, the average short at 50%/yr and at
+100%/yr, t, win rate, and the account's growth and worst drop for each rule and each fix, then the account's
+years as run and with the fixes, then the counts behind them (the trades still open and what they average,
+the trades left out for a downward break, the entries off the exchanges, the printed price and the costs).
