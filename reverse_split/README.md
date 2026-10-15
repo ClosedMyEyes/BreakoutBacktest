@@ -6,7 +6,8 @@ year borrow on the locked half, t 3.51, and passed all four checks. The earlier-
 The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account a short and 1% on 1-for-100+
 splits, which cut the locked half's worst drop from 40% to 22% (set after the run). See "Holdout result" at
 the end. **The day 20 to 80 short passed its own holdout run too** (+15.15% a trade, t 2.29, 5 a year, about
-half its Dev result); see its section at the end.
+half its Dev result) **and was locked the same day at the same size;** its checklist is under "How to trade
+it".
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -315,6 +316,24 @@ Nasdaq's Daily List, the broker's corporate actions page, or an SEC full-text se
 What to expect, from the locked half: about 16 trades a year, about 1.3 shorts open at once, +11.6% a trade
 after borrow, 3.4% a year for the account at this size and a worst drop of about 22%. A 13D or a big
 deal while short is worth a look by hand, but covering on one is untested.
+
+**On day 20 (the day 20 to 80 short, locked 2026-10-15), before the close:**
+
+1. The split passed the day 0 checks above (steps 1 to 4), and the stock traded $1M+ a day on average over
+   the 50 days to day 0.
+2. The close is 25% or more below the highest high since day 0 (days 1 to 20). A stock still near its
+   post-split high is a squeeze still running: those lost money.
+3. Printed price $1 or more.
+4. The S&P 500 closes above its 200-day average that day.
+5. Shares can be borrowed. It breaks even at about 115% a year on the locked half.
+6. Short at the close: 2% of the account, 1% for 1-for-100+. When the stock is already short from day 0,
+   keep it and bring it back to that size, which saves a round trip.
+7. Cover at the close 60 trading days later (day 80). No stop.
+
+What to expect, from the locked half: about 5 trades a year, +15% a trade after borrow, about 2.4% a year
+for the account at this size and a worst drop of about 26%. That drop was one stock, FLZH, whose high went
+14x the entry before it fell back. At 2%, a spike like that marks the short at about a quarter of the
+account, so keep enough margin to sit through it, or the broker may buy the short in at the top.
 
 ## The day 20 to 80 short (frozen 2026-10-15, then run once on the holdout)
 
