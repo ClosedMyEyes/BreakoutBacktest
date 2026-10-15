@@ -64,6 +64,7 @@ HOW TO RUN:
   python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout  # once
   python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen 20-80 --universe holdout --unlock-holdout
   python reverse_split/reverse_split_events.py --start 2010-01-01 --combined    # both frozen rules in one account
+  python reverse_split/reverse_split_events.py --start 2010-01-01 --audit       # ... and with each shortcut taken out
 
 The run prints, in order: the counts and data checks, the day-by-day move around day 0,
 every entry and hold (with the fee ladder), the pick split by what was known at the
@@ -156,6 +157,17 @@ FILTERS = [                                     # the filter table: (label, keep
     ("down 75%+ over 120 days", lambda g: g["move120"] < -75),
     ("an earlier reverse split in 3 years", lambda g: g["prior_n"] >= 1),
 ]
+AUDIT_SLIP = 0.5                                # --audit real costs: slippage, % a side (0.2 as run)
+AUDIT_FEE = 100.0                               # --audit: the borrow fee also shown, % a year
+AUDIT = [                                       # --audit rows: (label, frozen_trades() options)
+    ("as run", {}),
+    ("open marked", {"mark_open": True}),
+    ("real costs", {"real_cost": True}),
+    ("next open", {"next_open": True}),
+    ("marked+costs", {"mark_open": True, "real_cost": True}),
+    ("all three", {"mark_open": True, "real_cost": True, "next_open": True}),
+]
+AUDIT_YEARS = ["as run", "marked+costs", "all three"]     # --audit: the rows whose account years print
 SIZE_UP = 2.0                                   # --frozen sizing check: earlier-split trades get this many x the size
 SIZES = "2,5"                                   # account test: each short is X% of the account
 BIG_RATIO = 100.0                               # account test: 1-for-100+ shorts are also shown at
@@ -361,16 +373,21 @@ def entry_features(ev, df, off, market):
     return ev
 
 
-def trades(ev, df, mkt, entry, hold, stop_pct=0.0):
+def trades(ev, df, mkt, entry, hold, stop_pct=0.0, next_open=False, mark_open=False):
     """The short for one entry and hold, before any borrow. Returns columns named entry:hold:
     g_ (short after the round trip, %), h_ / n_ (the same hedged with the S&P / Nasdaq
     Composite), y_ (years held, days / 252), adv_ (went ADVERSE% against), del_ (stopped
     trading during the hold), raw_ (the stock's move, %), peak_ (highest high above the
-    entry, %) and exit_ (the cover row). The short at fee F is g_ - F x y_.
+    entry, %), px_ (the entry price, adjusted) and exit_ (the cover row). The short at fee F
+    is g_ - F x y_.
     stop_pct > 0: cover on the first day whose high reaches stop_pct% above the entry, at the
     stop (or the open, when it opened above it); columns are then named entry:hold/sN and add
-    stop_ (1 if stopped)."""
+    stop_ (1 if stopped).
+    For --audit: next_open shorts a close entry at the next open instead (decided at that close, same cover, so
+    close0 is open1); mark_open covers a trade still open when the data ends at the last close, not left out."""
     off, kind = ENTRIES[entry]
+    if next_open and kind == "close":
+        off, kind = off + 1, "open"
     o = df["open"].to_numpy(np.float64)
     c = df["close"].to_numpy(np.float64)
     h = df["high"].to_numpy(np.float64)
@@ -378,7 +395,7 @@ def trades(ev, df, mkt, entry, hold, stop_pct=0.0):
     dates = df["date"].to_numpy()
     r, last, gone = ev["row"].to_numpy(), ev["last"].to_numpy(), ev["gone"].to_numpy(dtype=bool)
     e = r + off                                     # the entry bar
-    base = r if kind == "open" else e               # the close the hold counts from
+    base = e - 1 if kind == "open" else e           # the close the hold counts from
     target = base + hold
     j = np.minimum(target, last)
     ok = (e <= last) & (j > base)
@@ -401,7 +418,7 @@ def trades(ev, df, mkt, entry, hold, stop_pct=0.0):
             hit_any |= hit
     peak = (peak / px - 1) * 100
     j = out_row
-    bad = ~ok | (cut & ~gone & ~hit_any) | (cdn[j] - cdn[base] > 0)
+    bad = ~ok | (cut & ~gone & ~hit_any & (not mark_open)) | (cdn[j] - cdn[np.minimum(base, last)] > 0)
     raw = out_px / px - 1
     pos = mkt.index.get_indexer(pd.DatetimeIndex(dates))
     pe, pj = pos[ee], pos[j]
@@ -424,6 +441,7 @@ def trades(ev, df, mkt, entry, hold, stop_pct=0.0):
             f"del_{name}": nan_if_bad((cut & gone & ~hit_any).astype(float)),
             f"raw_{name}": nan_if_bad(raw * 100),
             f"peak_{name}": nan_if_bad(peak),
+            f"px_{name}": nan_if_bad(px),
             f"exit_{name}": j}
 
 
@@ -775,7 +793,8 @@ def sizing_check(g, name, fee):
 
 def account_sized(g, df, spx, a, b, size_pct, borrow_pct, scale):
     """lockup_events.account() with each short opened at size_pct x its scale (one per row of g, so 0.5 is half
-    the size). All 1 gives the same curve."""
+    the size). All 1 gives the same curve. An entry_px column replaces the entry close the marks count from, and
+    at_open (a short at the open) sizes it on the account at the close before."""
     name = f"{a}:{b}"
     keep = g[f"short_{name}"].notna().to_numpy()
     g, scale = g[keep], np.asarray(scale, dtype=np.float64)[keep]
@@ -783,6 +802,8 @@ def account_sized(g, df, spx, a, b, size_pct, borrow_pct, scale):
     dpos = spx.index.get_indexer(pd.DatetimeIndex(df["date"].to_numpy()))
     r, last, final = g["row"].to_numpy(), g["last"].to_numpy(), g[f"short_{name}"].to_numpy()
     i, j = r + a, np.minimum(r + b, last)
+    px_in = g["entry_px"].to_numpy(np.float64) if "entry_px" in g else c[i]
+    lag = g["at_open"].to_numpy(np.int64) if "at_open" in g else np.zeros(len(g), dtype=np.int64)
     on = (dpos[i] >= 0) & (dpos[j] >= 0)
     if not on.any():
         return pd.DataFrame(columns=["date", "equity", "open", "short_%"]), int((~on).sum())
@@ -794,10 +815,10 @@ def account_sized(g, df, spx, a, b, size_pct, borrow_pct, scale):
         rows = np.arange(i[k], j[k] + 1)
         t = dpos[rows]
         rows, t = rows[t >= 0], t[t >= 0] - lo
-        move = c[rows] / c[i[k]] - 1
+        move = c[rows] / px_in[k] - 1
         path = -move * 100 - cost / 2 - borrow_pct * (rows - i[k]) / 252
         path[-1] = final[k]
-        size = size_pct * scale[k] / 100 * (1 + pnl[t[0]])
+        size = size_pct * scale[k] / 100 * (1 + pnl[max(t[0] - lag[k], 0)])
         span = np.full(t[-1] - t[0] + 1, np.nan)
         span[t - t[0]], held = path, np.full(t[-1] - t[0] + 1, np.nan)
         held[t - t[0]] = 1 + move
@@ -812,17 +833,36 @@ def account_sized(g, df, spx, a, b, size_pct, borrow_pct, scale):
     return curve, int((~on).sum())
 
 
-def frozen_trades(ev, df, mkt, key, fee):
+def frozen_trades(ev, df, mkt, key, fee, next_open=False, mark_open=False, real_cost=False):
     """One frozen rule's shorts on ev (with the entry features for its entry), as rows for account_sized() with
-    a=0, b=BIG_HOLD: row = the entry bar, last = the cover bar, short at fee."""
+    a=0, b=BIG_HOLD: row = the entry bar, last = the cover bar, entry_px, at_open, short at fee. For --audit:
+    next_open and mark_open as in trades(); real_cost charges the commission at the stock's own printed price and
+    AUDIT_SLIP a side instead of ce.round_trip_cost(), the ordinary dividends going ex while short, and the borrow
+    for every market day held instead of the stock's bars (cost_% and div_% are what it charged)."""
     entry, hold = parse_pick(FROZEN[key]["pick"])
     name = f"{entry}:{hold}"
+    off, kind = ENTRIES[entry]
     g = keep_only(ev, FROZEN[key]["only"])
-    g = pd.concat([g, pd.DataFrame(trades(g, df, mkt, entry, hold))], axis=1)
+    g = pd.concat([g, pd.DataFrame(trades(g, df, mkt, entry, hold, next_open=next_open, mark_open=mark_open))],
+                  axis=1)
     g = g[g[f"g_{name}"].notna()]
-    return pd.DataFrame({"rule": key, "symbol": g["symbol"].astype(str).to_numpy(), "date": g["date"].to_numpy(),
-                         "ratio": g["ratio"].to_numpy(), "row": g["row"].to_numpy() + ENTRIES[entry][0],
-                         "last": g[f"exit_{name}"].to_numpy(), f"short_0:{BIG_HOLD}": ret(g, name, fee).to_numpy()})
+    at_open = kind == "open" or next_open
+    e = g["row"].to_numpy() + off + int(next_open and kind == "close")
+    j, px = g[f"exit_{name}"].to_numpy(), g[f"px_{name}"].to_numpy(np.float64)
+    out = {"rule": key, "symbol": g["symbol"].astype(str).to_numpy(), "date": g["date"].to_numpy(),
+           "ratio": g["ratio"].to_numpy(), "row": e, "last": j, "entry_px": px,
+           "at_open": np.full(len(g), at_open), f"short_0:{BIG_HOLD}": ret(g, name, fee).to_numpy()}
+    if real_cost:
+        base = e - 1 if at_open else e                                  # the close it is decided on
+        cost = 2 * AUDIT_SLIP + 2 * config.COMMISSION_PER_SHARE / df["unadj_close"].to_numpy(np.float64)[base] * 100
+        cs = np.r_[0.0, np.cumsum(df["div"].fillna(0).to_numpy(np.float64))]
+        div = (cs[j + 1] - cs[e + 1]) / px * 100                        # ex-dates after the entry bar, to the cover
+        pos = mkt.index.get_indexer(pd.DatetimeIndex(df["date"].to_numpy()))
+        days = np.where((pos[j] >= 0) & (pos[base] >= 0), pos[j] - pos[base], j - base)
+        out[f"short_0:{BIG_HOLD}"] = (g[f"g_{name}"].to_numpy() + ce.round_trip_cost() - cost - div
+                                      - fee * np.maximum(days, 1) / 252)
+        out["cost_%"], out["div_%"] = cost, div
+    return pd.DataFrame(out)
 
 
 def combined(ev, df, mkt, fee, sizes):
@@ -854,6 +894,72 @@ def combined(ev, df, mkt, fee, sizes):
     if yrs:
         print(f"\nThe account's return each calendar year, at {sizes[0]:g}% a short:")
         print(pd.DataFrame(yrs).round(2).to_string())
+    return out
+
+
+def audit(ev, df, mkt, fee, size, counts):
+    """--audit: the frozen rules, each alone and both in one account (size % a short, 1-for-BIG_RATIO+ at BIG_SCALE
+    x that), as run and with each shortcut that could flatter them taken out (AUDIT). Prints the table, the
+    account's years and the counts behind them, and returns the table."""
+    col = f"short_0:{BIG_HOLD}"
+    rows, yrs, runs = [], {}, {}
+    for label, opt in AUDIT:
+        parts = {k: frozen_trades(ev, df, mkt, k, fee, **opt) for k in FROZEN}
+        hi = {k: frozen_trades(ev, df, mkt, k, AUDIT_FEE, **opt) for k in FROZEN}
+        parts["both"], hi["both"] = (pd.concat(list(p.values()), ignore_index=True) for p in (parts, hi))
+        runs[label] = parts
+        for k, g in parts.items():
+            s = g[col]
+            curve, _ = account_sized(g, df, mkt["spx_close"], 0, BIG_HOLD, size, fee,
+                                     np.where(g["ratio"] >= BIG_RATIO, BIG_SCALE, 1.0))
+            a, r_y = le.account_summary(curve, size) if not curve.empty else ({}, None)
+            rows.append({"rules": k, "audit": label, "trades": len(g), "ret": s.mean(),
+                         "t": num(ce.tstat_by_month(s, g["date"])), "win_%": (s > 0).mean() * 100,
+                         f"ret@{AUDIT_FEE:g}": hi[k][col].mean(), "cagr_%": a.get("cagr_%", np.nan),
+                         "max_dd_%": a.get("max_dd_%", np.nan)})
+            if k == "both" and label in AUDIT_YEARS and r_y is not None:
+                yrs[label] = r_y
+    out = pd.DataFrame(rows)
+    out = out.sort_values("rules", key=lambda x: x.map({k: n for n, k in enumerate(runs["as run"])}), kind="stable")
+    cost = ce.round_trip_cost()
+    print(f"\nAUDIT: the frozen rules at {fee:g}%/yr borrow, each alone and both in one account at {size:g}% a short "
+          f"(1-for-{BIG_RATIO:g}+ at {BIG_SCALE:g}x), as run and with each shortcut that could flatter them taken "
+          f"out. open marked = the trades still open when the data ends, covered at the last close (as run they are "
+          f"left out). real costs = $0.005 a share at the stock's own printed price (as run, at a $10 stock) and "
+          f"{AUDIT_SLIP:g}% slippage a side ({config.DEFAULT_SLIPPAGE_PCT:g}% as run), the ordinary dividends going "
+          f"ex while short (none as run), and the borrow for every market day held (the stock's bars as run). next "
+          f"open = short at the open after the close the rule is decided on, same cover (as run, at that close). "
+          f"ret@{AUDIT_FEE:g} = the average short at {AUDIT_FEE:g}%/yr borrow; cagr_% and max_dd_% = the account.")
+    print(out.round(2).to_string(index=False))
+    if yrs:
+        print(f"\nBoth rules' account, its return each calendar year at {size:g}% a short:")
+        print(pd.DataFrame(yrs).round(2).to_string())
+    print("\nThe counts behind it:")
+    bad = counts.get(f"bad prints (undone within {REVERT_BARS} bars)", 0)
+    print(f"  The bad-print filter is the one step that reads bars after day 0 to choose a split ({REVERT_BARS} "
+          f"bars): it left out {bad} split(s) in this universe.")
+    listed = df["listed"].to_numpy()
+    for k in FROZEN:
+        entry, hold = parse_pick(FROZEN[k]["pick"])
+        name, off = f"{entry}:{hold}", ENTRIES[entry][0]
+        g = keep_only(ev, FROZEN[k]["only"])
+        t = trades(g, df, mkt, entry, hold, mark_open=True)
+        inside = g["row"].to_numpy() + off <= g["last"].to_numpy()
+        n_dn = int((inside & np.isnan(t[f"g_{name}"])).sum())
+        run, marked, real = runs["as run"][k], runs["open marked"][k], runs["real costs"][k]
+        new = marked[~marked.set_index(["symbol", "date"]).index.isin(run.set_index(["symbol", "date"]).index)]
+        line = f"  {k}: {len(new)} trade(s) still open when the data ends" + (
+            f", averaging {new[col].mean():+.2f}% marked at the last close" if len(new) else "")
+        line += (f"; {n_dn} left out for a downward price break in the hold (an untrusted gain for the short, so "
+                 f"leaving them out is conservative); {int((listed[run['row'].to_numpy()] != 1).sum())} entered on "
+                 f"a bar off the major exchanges.")
+        if len(real):
+            px = df["unadj_close"].to_numpy(np.float64)[real["row"].to_numpy()]
+            line += (f" Printed price at the entry: median ${np.median(px):.2f}, so real costs are "
+                     f"{real['cost_%'].median():.2f}% a round trip (median) against {cost:.2f}%. Dividends: "
+                     f"{int((real['div_%'] > 0).sum())} of {len(real)} trades paid any, {real['div_%'].mean():.3f}% "
+                     f"a trade.")
+        print(line)
     return out
 
 
@@ -934,6 +1040,9 @@ def main():
                         help="Only the tables for refining the selection: filters, holds and stops, by 5-year block")
     parser.add_argument("--combined", action="store_true",
                         help="Only the account with every --frozen rule's shorts together (and each alone)")
+    parser.add_argument("--audit", action="store_true",
+                        help="Only the frozen rules as run and with each shortcut that could flatter them taken out "
+                             "(trades open at the data end, costs, dividends, the next open)")
     parser.add_argument("--sizes", type=str, default=SIZES,
                         help="Account test: each short is this %% of the account (2,5)")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
@@ -942,8 +1051,9 @@ def main():
     args = apply_frozen(parser.parse_args())
     if args.explore and args.universe != "dev":
         raise SystemExit("--explore is for Dev only: the holdout is run once, with --frozen.")
-    if args.combined and (args.frozen or args.explore or args.only or args.pick != PICK):
-        raise SystemExit("--combined runs the frozen rules as set; leave out --frozen, --explore, --pick and --only.")
+    if (args.combined or args.audit) and (args.frozen or args.explore or args.only or args.pick != PICK):
+        raise SystemExit("--combined and --audit run the frozen rules as set; leave out --frozen, --explore, --pick "
+                         "and --only.")
     P = collect(args, ["universe"])
     entry, hold = parse_pick(args.pick)
     fees = [float(x) for x in args.borrow_pcts.split(",") if x.strip()]
@@ -955,7 +1065,7 @@ def main():
     t0 = time.time()
     cols = (rules.universe_columns(P) + ["open", "high", "low", "close", "volume", "unadj_close", "turnover", "dv50",
                                          "sma200", "sma50", "hi52_c", "bad_bar", "bad_bar_dn", "bars_since_break",
-                                         "listed",
+                                         "listed", "div",
                                          "in_sp500", "in_sp400", "in_sp600", "in_r2000"])
     load_from = (pd.Timestamp(args.start) - pd.Timedelta(days=LOAD_PAD_DAYS)) if args.start else None
     try:
@@ -982,7 +1092,8 @@ def main():
     print(f"REVERSE-SPLIT SHORT  factor jump {args.min_ratio:g}x+  universe={args.universe}  start={args.start}  "
           f"end={args.end}  market={P['market']}  liq top {P['liq_top_pct']:g}%  "
           f"min price ${P['min_price']:g} printed  "
-          f"size={P['size']}  {'the frozen rules together' if args.combined else 'pick ' + args.pick} at {fee:g}%/yr "
+          f"size={P['size']}  "
+          f"{'the frozen rules together' if args.combined or args.audit else 'pick ' + args.pick} at {fee:g}%/yr "
           f"borrow  ({time.time() - t0:.1f}s)")
     print("=" * 110)
     print("Reverse splits found: " + ", ".join(f"{v:,} {k}" for k, v in counts.items())
@@ -996,6 +1107,10 @@ def main():
     if args.combined:
         combined(entry_features(ev, df, ENTRIES["close20"][0], market), df, mkt, fee,
                  [float(x) for x in args.sizes.split(",") if x.strip()])
+        return
+    if args.audit:
+        audit(entry_features(ev, df, ENTRIES["close20"][0], market), df, mkt, fee,
+              float(args.sizes.split(",")[0]), counts)
         return
     if ENTRIES[entry][1] == "close" and ENTRIES[entry][0] > 0:
         ev = entry_features(ev, df, ENTRIES[entry][0], market)
