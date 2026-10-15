@@ -7,8 +7,9 @@ The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account 
 splits, which cut the locked half's worst drop from 40% to 22% (set after the run). See "Holdout result" at
 the end. **The day 20 to 80 short passed its own holdout run too** (+15.15% a trade, t 2.29, 5 a year, about
 half its Dev result) **and was locked the same day at the same size;** its checklist is under "How to trade
-it". A read of the code for look-ahead found none in what picks the trades; `--audit` measures the shortcuts
-that could still flatter the results (see "Audit" at the end).
+it". A code audit found no look-ahead. With real costs, the trades still open marked and the short at the next
+open, both shorts made +11.41% a trade on the locked half (t 3.79) against +12.43% as run (see "Audit" at
+the end).
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -311,12 +312,13 @@ Nasdaq's Daily List, the broker's corporate actions page, or an SEC full-text se
 5. Shares can be borrowed. Check that morning, since many of these can't be. The test charged 50% a year;
    it breaks even at about 200%.
 6. Short at the close: 2% of the account, 1% for 1-for-100+. If the stock fell 10%+ that day, the short-sale
-   rule is on and a market-on-close short may not fill.
+   rule is on and a market-on-close short may not fill. The close matters: a short at the next open instead
+   made about a point a trade less (Audit).
 7. Cover at the close 20 trading days later. No stop: every stop tested made it worse.
 
 What to expect, from the locked half: about 16 trades a year, about 1.3 shorts open at once, +11.6% a trade
-after borrow, 3.4% a year for the account at this size and a worst drop of about 22%. A 13D or a big
-deal while short is worth a look by hand, but covering on one is untested.
+after borrow (+10.8% with real spreads and commission), 3.4% a year for the account at this size and a worst
+drop of about 22%. A 13D or a big deal while short is worth a look by hand, but covering on one is untested.
 
 **On day 20 (the day 20 to 80 short, locked 2026-10-15), before the close:**
 
@@ -328,10 +330,12 @@ deal while short is worth a look by hand, but covering on one is untested.
 4. The S&P 500 closes above its 200-day average that day.
 5. Shares can be borrowed. It breaks even at about 115% a year on the locked half.
 6. Short at the close: 2% of the account, 1% for 1-for-100+. When the stock is already short from day 0,
-   keep it and bring it back to that size, which saves a round trip.
+   keep it and bring it back to that size, which saves a round trip. If a check is too close to call before
+   the close, a short at the next open did as well in the audit (+15.7% a trade against +15.2%).
 7. Cover at the close 60 trading days later (day 80). No stop.
 
-What to expect, from the locked half: about 5 trades a year, +15% a trade after borrow, about 2.4% a year
+What to expect, from the locked half: about 5 trades a year, +15% a trade after borrow (the same with real
+costs and the trades still open marked), about 2.4% a year
 for the account at this size and a worst drop of about 26%. That drop was one stock, FLZH, whose high went
 14x the entry before it fell back. At 2%, a spike like that marks the short at about a quarter of the
 account, so keep enough margin to sit through it, or the broker may buy the short in at the top.
@@ -350,10 +354,10 @@ short on the same split (136 of 136 on Dev, 84 of 84 on the locked half). At 2% 
 
 The drops don't stack: the 0-20 shorts were making money while FLZH spiked. The yearly rate over 2010-26
 undersells the account now. Almost every trade is from 2022 on, when reverse splits became common, so the
-years before sit near zero. If they stay as common as in 2022-26, plan on about 17% a year from both shorts
-at 2% (the locked half's 2022 to 2026 average; 2023-25 alone made about 23%, which is the best stretch, not
-the plan), with a drop of about 26%, before the audit below. 2026 to September was +3.7% (FLZH and DFNS). At
-5% a short the locked half would have been 228% short at the peak, so 2% is the size.
+years before sit near zero. If they stay as common as in 2022-26, plan on about 16% a year from both shorts
+at 2% (the locked half's 2022 to 2026 average with every fix in the audit below: +10.9, +19.8, +21.2, +21.3
+and +6.2 to October; 2023-25 alone is the best stretch, not the plan), with a drop of about 25%. At 5% a
+short the locked half would have been 228% short at the peak, so 2% is the size.
 
 ## The day 20 to 80 short (frozen 2026-10-15, then run once on the holdout)
 
@@ -477,8 +481,8 @@ covered at its last exchange close.
 **What could flatter them**, and `--audit` measures each one on the two frozen rules, each alone and both in
 one account at 2% a short (1-for-100+ at 1%):
 
-- **Trades still open when the data ends are left out.** 17 of the 101 day 20 to 80 shorts on the locked
-  half were, all from mid-2026, a year that was going badly. `open marked` covers them at the last close.
+- **Trades still open when the data ends are left out.** 15 of the 99 day 20 to 80 shorts on the locked
+  half were (all from mid-2026, when that rule was losing). `open marked` covers them at the last close.
 - **Costs.** The 0.50% round trip charges commission as if the stock were $10 and 0.2% slippage a side.
   `real costs` charges $0.005 a share at the stock's own printed price, 0.5% slippage a side, the ordinary
   dividends going ex while short, and the borrow for every market day held, not just the stock's bars.
@@ -497,3 +501,35 @@ It changes no rule, so it can run on both halves. The table has trades, the aver
 100%/yr, t, win rate, and the account's growth and worst drop for each rule and each fix, then the account's
 years as run and with the fixes, then the counts behind them (the trades still open and what they average,
 the trades left out for a downward break, the entries off the exchanges, the printed price and the costs).
+
+### Its result
+
+Mark ran `--audit` on both halves on 2026-10-15. Short, % a trade at 50%/yr borrow (t), and the account at
+2% a short (1% on 1-for-100+):
+
+| | As run | Open trades marked | Real costs | Next open | All three |
+|---|---|---|---|---|---|
+| Locked half, 0-20 | +11.56 (3.51) | +11.58 | +10.80 | +10.52 | +9.79 (2.98) |
+| Locked half, 20-80 | +15.15 (2.29) | +16.01 | +14.29 | +15.72 | +15.79 (2.88) |
+| Locked half, both | +12.43 (3.77) | +12.78 | +11.64 | +11.78 | +11.41 (3.79) |
+| Locked half, both, account | 4.66%/yr, drop 25.6% | 5.06% | 4.35% | 4.43% | 4.52%, drop 25.0% |
+| Dev, 0-20 | +18.55 (7.80) | +19.02 | +17.79 | +17.42 | +17.09 (6.94) |
+| Dev, 20-80 | +26.45 (7.07) | +25.79 | +25.58 | +26.02 | +24.58 (6.99) |
+| Dev, both, account | 10.87%/yr, drop 16.2% | 11.38% | 10.45% | 10.29% | 10.35%, drop 16.5% |
+
+- **The edge holds.** With every fix, both shorts made +11.41% a trade on the locked half, 1.0 point under
+  as run, with the same t. The 0-20 short loses about 1.8 points (+9.79%, t 2.98) and the 20-80 short none.
+- **The trades left out at the data end were winners**, so leaving them out was conservative: on the locked
+  half 4 for 0-20 (+13.47% marked at the last close) and 15 for 20-80 (+20.80%); on Dev 5 (+48.02%) and 12
+  (+18.35%).
+- **Costs are the real hit.** The median entry prints $4.37 (0-20) and $2.92 (20-80) on the locked half, so
+  commission at $0.005 a share and 0.5% slippage a side come to 1.23% and 1.34% a round trip, about 0.8
+  points a trade more than the 0.50% the rules were tested at. No trade paid a dividend.
+- **The next open** costs the 0-20 short about a point a trade (the split-day close is the better price) and
+  helps the 20-80 short a little on the locked half (+15.72% against +15.15%; on Dev -0.4).
+- **Counts.** 0 splits left out by the bad-print filter on either half; 0 and 2 trades left out for a
+  downward break (Dev, locked half, 20-80); 0 entries off the major exchanges. One symbol listed after the
+  Dev/holdout split file was made is in neither half.
+- **Both shorts' account by year on the locked half with every fix:** 2022 +10.9%, 2023 +19.8%, 2024
+  +21.2%, 2025 +21.3%, 2026 +6.2% to October (+3.7% as run, +8.8% with the open trades marked and real
+  costs). The planning case is now about 16% a year at 2% with a drop of about 25%.
