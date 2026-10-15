@@ -10,7 +10,8 @@ reverse split in the past year, on small samples found after the fact. This chec
 as its own event, charging a high borrow fee from the day of entry, since these are
 among the hardest stocks to borrow.
 
-No setups, stops or sizing: an event table, like the gap and lock-up studies.
+No setups or sizing and no stop on the pick: an event table, like the gap and lock-up
+studies (--explore also tries stops).
 
   event     day 0 = the first bar at the new price: a listed bar where Norgate's factor
             (printed close / adjusted close) rose --min-ratio (1.4) times or more since
@@ -54,12 +55,19 @@ HOW TO RUN:
   python reverse_split/reverse_split_events.py --start 2010-01-01 --sample 10
   python reverse_split/reverse_split_events.py --start 2010-01-01 --min-price 5        # the usual $5 floor
   python reverse_split/reverse_split_events.py --start 2010-01-01 --only ratio:5:20    # one bucket, by block
+  python reverse_split/reverse_split_events.py --start 2010-01-01 --explore            # refine the selection on Dev
+  python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only spx_above200:1:2   # within a filter
   python reverse_split/reverse_split_events.py --start 2010-01-01 --universe holdout --unlock-holdout   # once, frozen
 
 The run prints, in order: the counts and data checks, the day-by-day move around day 0,
 every entry and hold (with the fee ladder), the pick split by what was known at the
 day 0 close, the pick by 5-year block and year, the losses and an account test, the
 sample, and the pass bar with the number of tries.
+
+--explore prints only the tables for refining the selection on Dev, each split by 5-year
+block: the pick by downtrend, market, volume, split and size filters, every entry and hold,
+and stops at +300 / +200 / +100 / +50% above the entry with an account test at 2% a short.
+--only first narrows the events, so the tables show one filter inside another.
 """
 
 import argparse
@@ -110,6 +118,9 @@ DV_EDGES = [0, 1, 5, 20, np.inf]                # 50-day $ volume, $M a day
 RUN_EDGES = [-np.inf, -50, -20, 0, np.inf]      # % move over the 60 bars before day 0
 DAY0_BAND = 5.0                                 # day 0 move within this % of day -1 = flat
 COVID = ("2020-03-01", "2021-12-31")            # the episode the pick must survive without
+BLOCKS = ["2010-2014", "2015-2019", "2020-2024", "2025-2029"]   # the explore tables' block columns
+STOPS = [300, 200, 100, 50]                     # --explore: % above the entry (no stop is the first row)
+BIG_HOLD = 10 ** 6                              # lets lockup_events.account() take any cover row
 NEED_BLOCKS = ["2015-2019", "2020-2024", "2025-2029"]
 SIZES = "2,5"                                   # account test: each short is X% of the account
 WORST = 10
@@ -172,13 +183,15 @@ def find_splits(df, codes, min_ratio=MIN_RATIO, dedupe=DEDUPE, min_bars=MIN_BARS
     same = prev >= first[cand]
     repeat = same & (cand - prev <= dedupe)
     prior = same & (cand - prev <= PRIOR_BARS)
+    lo = np.maximum(cand - PRIOR_BARS, first[cand])
+    n_prior = np.arange(len(cand)) - np.searchsorted(cand, lo)      # earlier splits of the stock in the window
     short = (cand - first[cand] < min_bars) & ~repeat
     counts["repeats within the dedupe bars"] = int(repeat.sum())
     counts[f"under {min_bars} bars of history"] = int(short.sum())
     keep = ~repeat & ~short
     rows = cand[keep]
     ev = pd.DataFrame({"row": rows, "first": first[rows], "last": last[rows], "ratio": jump[rows],
-                       "prior_split": prior[keep]})
+                       "prior_split": prior[keep], "prior_n": n_prior[keep]})
     return ev, counts
 
 
@@ -222,8 +235,23 @@ def select(df, codes, P, args, keep_market=None):
     return ev, counts
 
 
-def features(ev, df, spx_above200):
-    """What is known at the day 0 close, for the split table."""
+def window_mean(x, r, a, b, first):
+    """Mean of x over rows r+a .. r+b (same stock), NaN if r+a is before the stock's first row."""
+    fin = np.isfinite(x)
+    cs = np.r_[0.0, np.cumsum(np.where(fin, x, 0.0))]
+    cn = np.r_[0, np.cumsum(fin)]
+    lo, hi = r + a, r + b + 1
+    ok = lo >= first
+    lo, hi = np.where(ok, lo, r), np.where(ok, hi, r + 1)
+    n = cn[hi] - cn[lo]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(ok & (n > 0), (cs[hi] - cs[lo]) / n, np.nan)
+
+
+def features(ev, df, spx_above200, market=None, mkt=None):
+    """What is known at the day 0 close, for the split table. With market (market features by
+    date) and mkt (index closes by date), also the explore columns: the longer downtrend, the
+    volume before day 0 and the market at day 0."""
     c = df["close"].to_numpy(np.float64)
     u = df["unadj_close"].to_numpy(np.float64)
     r, first = ev["row"].to_numpy(), ev["first"].to_numpy()
@@ -241,15 +269,42 @@ def features(ev, df, spx_above200):
     sma = df["sma200"].to_numpy(np.float64)[r]
     ev["above200"] = np.where(np.isfinite(sma), (c[r] > sma).astype(float), np.nan)
     ev["spx_above200"] = spx_above200.reindex(pd.DatetimeIndex(df["date"].to_numpy()[r])).to_numpy()
+    if market is None:
+        return ev
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for k in [120, 250]:
+            a = r - k
+            ev[f"move{k}"] = np.where(a >= first, (c[p] / c[np.maximum(a, 0)] - 1) * 100, np.nan)
+        hi = df["hi52_c"].to_numpy(np.float64)[p]
+        ev["from_high"] = np.where(hi > 0, (1 - c[p] / hi) * 100, np.nan)
+        s50 = df["sma50"].to_numpy(np.float64)[r]
+        ev["above50"] = np.where(np.isfinite(s50), (c[r] > s50).astype(float), np.nan)
+        sh = df["turnover"].to_numpy(np.float64) / np.where(c > 0, c, np.nan)     # split-consistent shares
+        usual = window_mean(sh, r, VOL_BASE[0], VOL_BASE[1], first)
+        ev["vol10_x"] = window_mean(sh, r, -10, -1, first) / usual
+        ev["vol50_x"] = window_mean(sh, r, -50, -1, first) / window_mean(sh, r, -250, -51, first)
+        ev["vol0_x"] = sh[r] / usual
+    d = pd.DatetimeIndex(df["date"].to_numpy()[r])
+    m = market.reindex(d)
+    for k in ["spx_above50", "comp_above200"]:
+        ev[k] = m[k].to_numpy(np.float64)
+    up = (m["spx_above200"] == 1) & (m["spx_above50"] == 1) & (m["spx_sma50_rising"] == 1)
+    ev["spx_trend"] = up.to_numpy(float)
+    ev["breadth"] = m["pct_above200"].to_numpy(np.float64)
+    sc = mkt["spx_close"]
+    ev["spx_move20"] = ((sc / sc.shift(20) - 1) * 100).reindex(d).to_numpy()
     return ev
 
 
-def trades(ev, df, mkt, entry, hold):
+def trades(ev, df, mkt, entry, hold, stop_pct=0.0):
     """The short for one entry and hold, before any borrow. Returns columns named entry:hold:
     g_ (short after the round trip, %), h_ / n_ (the same hedged with the S&P / Nasdaq
     Composite), y_ (years held, days / 252), adv_ (went ADVERSE% against), del_ (stopped
     trading during the hold), raw_ (the stock's move, %), peak_ (highest high above the
-    entry, %) and exit_ (the cover row). The short at fee F is g_ - F x y_."""
+    entry, %) and exit_ (the cover row). The short at fee F is g_ - F x y_.
+    stop_pct > 0: cover on the first day whose high reaches stop_pct% above the entry, at the
+    stop (or the open, when it opened above it); columns are then named entry:hold/sN and add
+    stop_ (1 if stopped)."""
     off, kind = ENTRIES[entry]
     o = df["open"].to_numpy(np.float64)
     c = df["close"].to_numpy(np.float64)
@@ -266,8 +321,23 @@ def trades(ev, df, mkt, entry, hold):
     px = np.where(ok, o[ee] if kind == "open" else c[ee], np.nan)
     ok &= px > 0
     cut = target > last
-    bad = ~ok | (cut & ~gone) | (cdn[j] - cdn[base] > 0)
-    raw = c[j] / px - 1
+    level = px * (1 + stop_pct / 100) if stop_pct > 0 else np.full(len(r), np.inf)
+    out_row, out_px = j.copy(), c[j].copy()
+    hit_any = np.zeros(len(r), dtype=bool)
+    peak = np.full(len(r), np.nan)
+    for k in range(0 if kind == "open" else 1, int((target - e).max(initial=0)) + 1):
+        jj = np.minimum(e + k, last)
+        live = (e + k <= j) & ~hit_any
+        peak = np.where(live, np.fmax(peak, h[jj]), peak)
+        if stop_pct > 0:
+            hit = live & (h[jj] >= level)
+            fill = level if (kind == "open" and k == 0) else np.fmax(o[jj], level)
+            out_row, out_px = np.where(hit, jj, out_row), np.where(hit, fill, out_px)
+            hit_any |= hit
+    peak = (peak / px - 1) * 100
+    j = out_row
+    bad = ~ok | (cut & ~gone & ~hit_any) | (cdn[j] - cdn[base] > 0)
+    raw = out_px / px - 1
     pos = mkt.index.get_indexer(pd.DatetimeIndex(dates))
     pe, pj = pos[ee], pos[j]
     have = (pe >= 0) & (pj >= 0)
@@ -278,19 +348,15 @@ def trades(ev, df, mkt, entry, hold):
         idx[k] = np.where(have, m_out / m_in - 1, np.nan)
     days = np.maximum(j - base, 1)
     cost = ce.round_trip_cost()
-    peak = np.full(len(r), np.nan)
-    for k in range(0 if kind == "open" else 1, int((target - e).max(initial=0)) + 1):
-        jj = np.minimum(e + k, last)
-        peak = np.where(e + k <= j, np.fmax(peak, h[jj]), peak)
-    peak = (peak / px - 1) * 100
-    name = f"{entry}:{hold}"
+    name = f"{entry}:{hold}" + (f"/s{stop_pct:g}" if stop_pct > 0 else "")
     nan_if_bad = lambda x: np.where(bad, np.nan, x)
-    return {f"g_{name}": nan_if_bad(-raw * 100 - cost),
+    out = {f"stop_{name}": nan_if_bad(hit_any.astype(float))} if stop_pct > 0 else {}
+    return {**out, f"g_{name}": nan_if_bad(-raw * 100 - cost),
             f"h_{name}": nan_if_bad(-(raw - idx["spx"]) * 100 - cost),
             f"n_{name}": nan_if_bad(-(raw - idx["comp"]) * 100 - cost),
             f"y_{name}": nan_if_bad(days / 252),
             f"adv_{name}": nan_if_bad((peak >= ADVERSE).astype(float)),
-            f"del_{name}": nan_if_bad((cut & gone).astype(float)),
+            f"del_{name}": nan_if_bad((cut & gone & ~hit_any).astype(float)),
             f"raw_{name}": nan_if_bad(raw * 100),
             f"peak_{name}": nan_if_bad(peak),
             f"exit_{name}": j}
@@ -455,6 +521,122 @@ def by_period(g, name, fee, key):
     return pd.DataFrame(rows)
 
 
+def explore_groups(g, min_ratio):
+    """The --explore families: (family, [(filter, [(bucket, mask)])]), all known at the day 0 close."""
+    pct = lambda x: f"{x:g}%"
+    xs = lambda x: f"{x:g}x"
+    money = lambda x: f"${x:g}"
+    flag = lambda col, yes, no: [(yes, (g[col] == 1).to_numpy()), (no, (g[col] == 0).to_numpy())]
+    pn = g["prior_n"]
+    return [
+        ("DOWNTREND (the stock before day 0)", [
+            ("60-day move", bins_of(g["run60"], RUN_EDGES, pct)),
+            ("120-day move", bins_of(g["move120"], [-np.inf, -75, -50, -25, 0, np.inf], pct)),
+            ("250-day move", bins_of(g["move250"], [-np.inf, -90, -75, -50, 0, np.inf], pct)),
+            ("% below 52-week high", bins_of(g["from_high"], [0, 50, 75, 90, np.inf], pct)),
+            ("vs its 200-day", flag("above200", "above", "below")),
+            ("vs its 50-day", flag("above50", "above", "below"))]),
+        ("MARKET (at the day 0 close)", [
+            ("S&P vs 200-day", flag("spx_above200", "above", "below")),
+            ("S&P vs 50-day", flag("spx_above50", "above", "below")),
+            ("S&P uptrend", flag("spx_trend", "yes", "no")),
+            ("S&P 20-day move", bins_of(g["spx_move20"], [-np.inf, -5, 0, 5, np.inf], pct)),
+            ("Nasdaq vs 200-day", flag("comp_above200", "above", "below")),
+            ("% of stocks > 200d", bins_of(g["breadth"], [0, 40, 60, np.inf], pct))]),
+        ("VOLUME (split-consistent shares)", [
+            ("last 10 days vs usual", bins_of(g["vol10_x"], [0, 0.75, 1, 1.5, np.inf], xs)),
+            ("last 50 vs 200 before", bins_of(g["vol50_x"], [0, 0.75, 1, 1.5, np.inf], xs)),
+            ("day 0 vs usual", bins_of(g["vol0_x"], [0, 2, 5, np.inf], xs))]),
+        ("THE SPLIT", [
+            ("ratio", bins_of(g["ratio"], edges_of(min_ratio, RATIO_BINS), lambda x: f"1-for-{x:g}")),
+            ("splits in past 3 yrs", [("none", (pn == 0).to_numpy()), ("1", (pn == 1).to_numpy()),
+                                      ("2+", (pn >= 2).to_numpy())]),
+            ("printed price day -1", bins_of(g["px_prev"], PRE_PRICE_EDGES, money)),
+            ("day 0 move", [(f"down {DAY0_BAND:g}%+", (g["day0"] <= -DAY0_BAND).to_numpy()),
+                            ("flat", (g["day0"].abs() < DAY0_BAND).to_numpy()),
+                            (f"up {DAY0_BAND:g}%+", (g["day0"] >= DAY0_BAND).to_numpy())])]),
+        ("SIZE", [
+            ("$ volume, $M/day", bins_of(g["dv_m"], DV_EDGES, money)),
+            ("index", [(k, (g["index"] == k).to_numpy())
+                       for k in ["S&P 500/400/600", "Russell 2000 only", "neither"]])]),
+    ]
+
+
+def block_row(s, name, fee):
+    """The trade `name` at fee for one set of trades: all years and each 5-year block."""
+    st = stats(s, name, fee, 1.0)
+    row = {"trades": st["trades"], "ret": st.get("ret", np.nan), "t": num(st.get("t")),
+           "hedged": st.get("hedged", np.nan)}
+    up = n = 0
+    blk = ret(s, name, fee).groupby(ce.block_of(s["date"])).agg(["mean", "count"]) if len(s) else None
+    for b in BLOCKS:
+        v = blk["mean"].get(b, np.nan) if blk is not None else np.nan
+        row[b[:4] + ("+" if b == BLOCKS[-1] else "-" + b[7:9])] = v
+        if blk is not None and blk["count"].get(b, 0) > 0:
+            n += 1
+            up += int(v > 0)
+    row["blocks_up"] = f"{up}/{n}"
+    for k in ["win_%", "adv50_%", "be_fee"]:
+        row[k] = st.get(k, np.nan)
+    return row
+
+
+def explore(pick, ev, df, mkt, name, fee, grid, args):
+    """--explore: tables for refining the selection on Dev, each split by 5-year block. Prints
+    them and returns the number of rows (tries)."""
+    tried = 0
+    print(f"\nEXPLORE ({len(pick):,} trades of {args.pick} at {fee:g}%/yr borrow). Each row: trades, ret and its "
+          f"month-clustered t, hedged with the S&P, the average ret in each 5-year block, blocks_up = blocks with "
+          f"ret above 0, win_%, adv50_% (went {ADVERSE:g}%+ against first), be_fee. Everything is known at the day 0 "
+          f"close. Many rows will look good by chance: a filter is worth keeping only if it holds in every block "
+          f"and there is a reason for it.")
+    for family, filters in explore_groups(pick, args.min_ratio):
+        rows = []
+        for flt, buckets in filters:
+            for label, mask in buckets:
+                rows.append({"filter": flt, "bucket": label, **block_row(pick.loc[mask], name, fee)})
+                tried += 1
+        print(f"\n{family}")
+        print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    rows = [{"entry": e, "hold": hh, **block_row(ev[ev[f"g_{e}:{hh}"].notna()], f"{e}:{hh}", fee)} for e, hh in grid]
+    tried += len(grid)
+    print(f"\nEVERY ENTRY AND HOLD by block, at {fee:g}%/yr: does a shorter or longer hold hold up better?")
+    print(pd.DataFrame(rows).round(2).to_string(index=False))
+
+    off, kind = ENTRIES[parse_pick(args.pick)[0]]
+    hold = parse_pick(args.pick)[1]
+    rows = []
+    for stop in [0] + STOPS:
+        if stop:
+            t = pd.concat([pick, pd.DataFrame(trades(pick, df, mkt, parse_pick(args.pick)[0], hold, stop))], axis=1)
+            sname = f"{name}/s{stop:g}"
+            t = t[t[f"g_{sname}"].notna()]
+        else:
+            t, sname = pick, name
+        row = {"stop": f"+{stop:g}%" if stop else "none", **block_row(t, sname, fee)}
+        r_ = ret(t, sname, fee)
+        row["stopped_%"] = t[f"stop_{sname}"].mean() * 100 if stop else 0.0
+        row["worst"], row["worst5%"] = r_.min(), r_.quantile(0.05)
+        if kind == "close" and len(t):
+            exit_row = t[f"exit_{sname}"].to_numpy()
+            acc = pd.DataFrame({"row": t["row"].to_numpy() + off, "last": exit_row, "date": t["date"].to_numpy(),
+                                f"short_0:{BIG_HOLD}": r_.to_numpy()})
+            curve, _ = le.account(acc, df, mkt["spx_close"], 0, BIG_HOLD, 2.0, fee)
+            if not curve.empty:
+                a = le.account_summary(curve, 2.0)[0]
+                row["acct2_cagr"], row["acct2_maxdd"] = a["cagr_%"], a["max_dd_%"]
+        rows.append(row)
+        tried += 1 if stop else 0
+    print("\nSTOPS on the pick: cover when the day's high reaches the stop above the entry, at the stop (or the open, "
+          "when it gapped above it). The tail is the risk here (adv50_% above), so wide stops are tested too. "
+          "acct2_ = the account test at 2% of the account a short: yearly growth and the worst drop.")
+    out = pd.DataFrame(rows)
+    out = out.drop(columns=[c for c in ["win_%", "adv50_%", "be_fee"] if c in out])
+    print(out.round(2).to_string(index=False))
+    return tried
+
+
 def num(x):
     return np.nan if x is None else x
 
@@ -517,7 +699,11 @@ def main():
                              "table's")
     parser.add_argument("--only", action="append", default=[],
                         help="Keep events with a column in [lo, hi), e.g. --only ratio:5:20 (columns: ratio, px_prev, "
-                             "px0, dv_m, run60, day0); may be given more than once")
+                             "px0, dv_m, run60, day0, prior_n, and for flags 1:2 = yes, e.g. spx_above200:1:2; also "
+                             "move120, move250, from_high, above50, vol10_x, vol50_x, vol0_x, spx_above50, spx_trend, "
+                             "spx_move20, comp_above200, breadth); may be given more than once")
+    parser.add_argument("--explore", action="store_true",
+                        help="Only the tables for refining the selection: filters, holds and stops, by 5-year block")
     parser.add_argument("--sizes", type=str, default=SIZES,
                         help="Account test: each short is this %% of the account (2,5)")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
@@ -534,7 +720,8 @@ def main():
 
     t0 = time.time()
     cols = (rules.universe_columns(P) + ["open", "high", "low", "close", "volume", "unadj_close", "turnover", "dv50",
-                                         "sma200", "bad_bar", "bad_bar_dn", "bars_since_break", "listed",
+                                         "sma200", "sma50", "hi52_c", "bad_bar", "bad_bar_dn", "bars_since_break",
+                                         "listed",
                                          "in_sp500", "in_sp400", "in_sp600", "in_r2000"])
     load_from = (pd.Timestamp(args.start) - pd.Timedelta(days=LOAD_PAD_DAYS)) if args.start else None
     try:
@@ -549,7 +736,9 @@ def main():
     codes = df["symbol"].cat.codes.to_numpy()
     mkt = pd.read_parquet(config.MARKET_FILE, columns=["date", "spx_open", "spx_close", "comp_open", "comp_close"])
     mkt = mkt.sort_values("date").set_index("date")
-    spx200 = datastore.load_market(["spx_above200"]).set_index("date")["spx_above200"]
+    market = datastore.load_market(["spx_above200", "spx_above50", "spx_sma50_rising", "comp_above200",
+                                    "pct_above200"]).set_index("date")
+    spx200 = market["spx_above200"]
     keep_market = None
     if rules.market_columns(P):
         keep_market = rules.market_mask(df["date"], datastore.load_market(rules.market_columns(P)), P)
@@ -568,7 +757,7 @@ def main():
         return
     pd.set_option("display.width", 250)
     years = ce.span_years(ev["date"])
-    ev = features(ev, df, spx200)
+    ev = features(ev, df, spx200, market, mkt)
     if args.only:
         ev = keep_only(ev, args.only)
         print(f"Kept {len(ev):,} events with {' and '.join(args.only)}.")
@@ -581,6 +770,32 @@ def main():
           f"the past 3 years.")
     per_year = ev.groupby(ev["date"].dt.year).size()
     print("Events a year: " + ", ".join(f"{y} {n}" for y, n in per_year.items()))
+
+    grid = [(e, hh) for e in ENTRIES for hh in HOLDS]
+    if (entry, hold) not in grid:
+        grid.append((entry, hold))
+    name = f"{entry}:{hold}"
+    if args.explore:
+        cols_out = {}
+        for e, hh in grid:
+            cols_out.update(trades(ev, df, mkt, e, hh))
+        ev = pd.concat([ev, pd.DataFrame(cols_out)], axis=1)
+        pick = ev[ev[f"g_{name}"].notna()].reset_index(drop=True)
+        tried = explore(pick, ev, df, mkt, name, fee, grid, args)
+        print(f"\n{tried} rows above, each one more try on the same Dev data (the first run had 132). Settle on a "
+              f"few filters with a reason behind each and that hold in every block, then freeze the rule and test it "
+              f"once on the holdout.")
+        if not args.no_log:
+            res = {k: (round(float(v), 3) if v is not None and np.isfinite(v) else None)
+                   for k, v in stats(pick, name, fee, years).items()}
+            research_log.append(
+                question="Reverse-split short: which filters, hold and stop?",
+                phase="reverse_split", split=args.universe, script="reverse_split_events.py --explore",
+                params={"start": args.start, "end": args.end, "pick": args.pick, "pick_fee": fee,
+                        "min_ratio": args.min_ratio, "dedupe": args.dedupe, "only": args.only, "market": P["market"],
+                        "size": P["size"], "liq_top_pct": P["liq_top_pct"], "min_price": P["min_price"]},
+                combinations=tried, runs=1, results=res)
+        return
     rd = ev["ratio"].where(ev["ratio"] < 2, ev["ratio"].round())
     common = rd.round(1).value_counts().head(10)
     print("\nRatio (factor jump on day 0; a 1-for-10 is 10). Real reverse splits are mostly 1-for-5 to 1-for-50 "
@@ -601,9 +816,6 @@ def main():
     prof = profile(ev, df, mkt)
     print(prof[prof["day"].isin(PROFILE_SHOW)].round(2).to_string(index=False))
 
-    grid = [(e, hh) for e in ENTRIES for hh in HOLDS]
-    if (entry, hold) not in grid:
-        grid.append((entry, hold))
     cols_out = {}
     for e, hh in grid:
         cols_out.update(trades(ev, df, mkt, e, hh))
@@ -620,19 +832,18 @@ def main():
     print(pd.DataFrame(rows)[show].round(2).to_string(index=False))
     rows = []
     for e, hh in grid:
-        name = f"{e}:{hh}"
-        row = {"entry": e, "hold": hh, "trades": int(ev[f"g_{name}"].notna().sum())}
+        rn = f"{e}:{hh}"
+        row = {"entry": e, "hold": hh, "trades": int(ev[f"g_{rn}"].notna().sum())}
         for f in sorted(fees):
-            row[f"ret@{f:g}"] = ret(ev, name, f).mean()
-        row[f"hedged@{fee:g}"] = ret(ev, name, fee, "h").mean()
-        row[f"t@{fee:g}"] = ce.tstat_by_month(ret(ev, name, fee), ev["date"])
-        row["be_fee"] = breakeven(ev, name)
+            row[f"ret@{f:g}"] = ret(ev, rn, f).mean()
+        row[f"hedged@{fee:g}"] = ret(ev, rn, fee, "h").mean()
+        row[f"t@{fee:g}"] = ce.tstat_by_month(ret(ev, rn, fee), ev["date"])
+        row["be_fee"] = breakeven(ev, rn)
         rows.append(row)
     print(f"\nThe fee ladder: the same rows at each borrow fee (% a year), hedged and t at {fee:g}%. Borrow is charged "
           f"from the entry for every trading day held, days / 252. be_fee = the fee at which the row breaks even.")
     print(pd.DataFrame(rows).round(2).to_string(index=False))
 
-    name = f"{entry}:{hold}"
     pick = ev[ev[f"g_{name}"].notna()].reset_index(drop=True)
     off, kind = ENTRIES[entry]
     opened = (ev["row"] + off <= ev["last"]).to_numpy()
