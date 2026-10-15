@@ -100,7 +100,12 @@ python -m pytest reverse_split
 `--explore` prints only the tables for refining the selection, all on Dev, each row split by 5-year block
 (2010-14, 2015-19, 2020-24, 2025+) with `blocks_up`, the number of blocks where it made money. Most trades
 are from 2022 on, so a filter that only works there is likely one market, not an edge. Every bucket is
-known at the day 0 close:
+known at the day 0 close, or by the entry close for a later entry:
+
+- **At the entry** (only with a `close5` or `close20` pick, such as the day 20 to 80 short `close20:60`):
+  the move since the day 0 close, the highest high since then and how far the entry close is below it, the
+  printed price (under $1 is hard to short), dollar volume, the volume since day 0 against before the split,
+  and the S&P against its 200-day, all at the entry close.
 
 - **Downtrend:** the move over the 60, 120 and 250 bars before day 0, how far below its 52-week closing
   high, and the stock against its 200-day and 50-day.
@@ -127,12 +132,14 @@ python reverse_split/reverse_split_events.py --start 2010-01-01 --explore
 python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --pick close0:20
 python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only spx_above200:1:2
 python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only prior_n:1:99 --only ratio:20:inf
+python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --pick close20:60 --only ratio:20:inf --only in_index:0:1
 ```
 
 Flags are 0 or 1, so `col:1:2` keeps the yes side. The explore columns for `--only` are `move120`,
 `move250`, `from_high`, `above50`, `vol10_x`, `vol50_x`, `vol0_x`, `spx_above50`, `spx_trend`, `spx_move20`,
 `comp_above200`, `breadth` and `prior_n`, on top of `ratio`, `px_prev`, `px0`, `dv_m`, `run60`, `day0`,
-`above200` and `spx_above200`.
+`above200` and `spx_above200`. With a `close5` or `close20` pick, the entry columns are `since0`,
+`peak_since0`, `off_peak`, `px_e`, `dv_e_m`, `vol_since_x` and `spx_above200_e`.
 
 ## The frozen rule (set 2026-10-15, after exploring Dev, before the holdout)
 
