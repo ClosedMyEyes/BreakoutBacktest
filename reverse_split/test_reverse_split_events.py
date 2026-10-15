@@ -105,6 +105,7 @@ def test_a_break_on_day_0_is_allowed_but_an_earlier_one_blocks():
     assert list(ev["symbol"]) == ["DAY0"]
     ev = rs.features(ev, df, pd.Series(1, index=pd.DatetimeIndex(df["date"].unique())))
     assert bool(ev["break0"].iloc[0]) and np.isclose(ev["px_prev"].iloc[0], 0.4) and np.isclose(ev["px0"].iloc[0], 4)
+    assert ev["index"].iloc[0] == "neither" and ev["in_index"].iloc[0] == 0.0
 
 
 def test_the_short_at_each_fee_and_the_break_even_fee():
@@ -289,7 +290,7 @@ def test_frozen_sets_the_pick_and_filter_and_refuses_overrides():
     ns = lambda **kw: argparse.Namespace(**{"frozen": False, "pick": None, "only": [], **kw})
     assert rs.apply_frozen(ns()).pick == rs.PICK
     a = rs.apply_frozen(ns(frozen=True))
-    assert (a.pick, a.only) == ("close0:20", ["ratio:20:inf"])
+    assert (a.pick, a.only) == ("close0:20", ["ratio:20:inf", "in_index:0:1"])
     for bad in [ns(frozen=True, pick="close0:60"), ns(frozen=True, only=["ratio:5:20"])]:
         try:
             rs.apply_frozen(bad)
@@ -311,10 +312,9 @@ def test_filter_table_and_the_sizing_check():
     g[f"y_{name}"], g[f"adv_{name}"], g[f"del_{name}"] = 0.0, 0.0, 0.0      # no borrow, to keep the sums simple
     t = rs.filter_table(g, name, 50.0).set_index("filter")
     assert t.loc["all trades", "trades"] == 8 and np.isclose(t.loc["all trades", "total"], 100.0)
-    idx = t.loc["not an index member"]
-    assert idx["trades"] == 6 and np.isclose(idx["ret"], 142 / 6) and np.isclose(idx["ret_dropped"], -21.0)
-    assert np.isclose(idx["total_vs_all_%"], 142.0)
-    assert t.loc["$1M+ a day traded", "trades"] == 4 and np.isclose(t.loc["$1M+ a day traded", "ret"], 30.0)
+    dv = t.loc["$1M+ a day traded"]
+    assert dv["trades"] == 4 and np.isclose(dv["ret"], 30.0) and np.isclose(dv["ret_dropped"], -5.0)
+    assert np.isclose(dv["total_vs_all_%"], 120.0)
     na, ra, nb, rb, diff, tw = rs.sizing_check(g, name, 50.0)
     assert (na, nb) == (4, 4) and np.isclose(ra, 30.0) and np.isclose(rb, -5.0) and np.isclose(diff, 35.0)
     assert tw > 2

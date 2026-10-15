@@ -33,7 +33,8 @@ studies (--explore also tries stops).
             ends is left out
   pick      set before the first run: close0:60 judged at 50%/yr borrow (--pick close0:60
             --pick-fee 50). Every other row is context. After exploring Dev, the rule for the
-            holdout was frozen on 2026-10-15 (--frozen): 1-for-20+ splits, close0:20
+            holdout was frozen on 2026-10-15 (--frozen): 1-for-20+ splits, not an index
+            member, close0:20
 
 Costs: a round trip (ce.round_trip_cost(), about 0.50%) plus the borrow fee for every
 trading day held (days / 252), at each of --borrow-pcts (5, 25, 50, 100, 200 % a year).
@@ -125,9 +126,8 @@ BIG_HOLD = 10 ** 6                              # lets lockup_events.account() t
 NEED_BLOCKS = ["2015-2019", "2020-2024", "2025-2029"]
 FROZEN_SET = "2026-10-15"                       # --frozen: the rule set for the one holdout run, after --explore
 FROZEN_PICK = "close0:20"
-FROZEN_ONLY = ["ratio:20:inf"]                  # 1-for-20 and up
+FROZEN_ONLY = ["ratio:20:inf", "in_index:0:1"]  # 1-for-20 and up, not in the S&P 500/400/600 or Russell 2000
 FILTERS = [                                     # the filter table: (label, keep), each known at the day 0 close
-    ("not an index member", lambda g: g["index"] == "neither"),
     ("not after the S&P rose 5%+ in 20 days", lambda g: g["spx_move20"] < 5),
     ("S&P above its 200-day", lambda g: g["spx_above200"] == 1),
     ("$1M+ a day traded", lambda g: g["dv_m"] >= 1),
@@ -278,6 +278,7 @@ def features(ev, df, spx_above200, market=None, mkt=None):
     sp = df[["in_sp500", "in_sp400", "in_sp600"]].to_numpy()[r].max(axis=1) > 0
     r2 = df["in_r2000"].to_numpy()[r] > 0
     ev["index"] = np.select([sp, r2], ["S&P 500/400/600", "Russell 2000 only"], "neither")
+    ev["in_index"] = (sp | r2).astype(float)
     with np.errstate(invalid="ignore", divide="ignore"):
         a = r - RUN_BARS                            # the first of the 60 bars before day 0
         ev["run60"] = np.where(a >= first, (c[p] / c[np.maximum(a, 0)] - 1) * 100, np.nan)
@@ -756,7 +757,8 @@ def main():
                              "table's")
     parser.add_argument("--only", action="append", default=[],
                         help="Keep events with a column in [lo, hi), e.g. --only ratio:5:20 (columns: ratio, px_prev, "
-                             "px0, dv_m, run60, day0, prior_n, and for flags 1:2 = yes, e.g. spx_above200:1:2; also "
+                             "px0, dv_m, run60, day0, prior_n, and for flags 1:2 = yes, e.g. spx_above200:1:2 or "
+                             "in_index:0:1 for not an index member; also "
                              "move120, move250, from_high, above50, vol10_x, vol50_x, vol0_x, spx_above50, spx_trend, "
                              "spx_move20, comp_above200, breadth); may be given more than once")
     parser.add_argument("--frozen", action="store_true",
