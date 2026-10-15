@@ -342,3 +342,43 @@ def test_account_sized_matches_the_account_and_opens_a_short_at_its_scale():
     assert np.isclose(r[~up][0], 25.0 - rs.ce.round_trip_cost() - 50 * 20 / 252)
     assert np.isclose(half["equity"].iloc[-1], 1 + 0.02 * r[~up][0] / 100 + 0.01 * r[up][0] / 100)
     assert half["equity"].iloc[-1] > full["equity"].iloc[-1]
+
+
+def test_entry_features_at_a_later_close():
+    df, codes = panel(toy("E"), toy("LATE"))
+    r, late = start_of(df, "E") + 80, start_of(df, "LATE") + 290
+    reverse_split(df, r, 10)
+    reverse_split(df, late, 10)
+    df.loc[r + 5, "high"] = 6.0                                      # +50% above the day 0 close on day 5
+    df.loc[r + 20, ["close", "unadj_close"]] = 3.0                   # -25% by the day 20 close
+    df.loc[r + 1:r + 20, "turnover"] = df.loc[r + 1:r + 20, "close"] * 2e6   # twice the usual shares
+    ev = rs.entry_features(events(df, codes), df, 20, market_features(df))
+    e, x = ev[ev["symbol"] == "E"].iloc[0], ev[ev["symbol"] == "LATE"].iloc[0]
+    assert np.isclose(e["since0"], -25.0) and np.isclose(e["peak_since0"], 50.0) and np.isclose(e["off_peak"], 50.0)
+    assert e["px_e"] == 3.0 and np.isclose(e["dv_e_m"], 4.0) and np.isclose(e["vol_since_x"], 2.0)
+    assert e["spx_above200_e"] == 1.0
+    assert all(np.isnan(x[k]) for k in ["since0", "peak_since0", "px_e", "vol_since_x", "spx_above200_e"])
+
+
+def test_explore_with_a_day_20_entry_adds_the_entry_family(capsys):
+    frames = [toy(f"S{k}", n=400) for k in range(6)]
+    df, codes = panel(*frames)
+    for k in range(6):
+        s0 = start_of(df, f"S{k}")
+        reverse_split(df, s0 + 80 + 10 * k, [5, 10, 30][k % 3])
+        df.loc[s0 + 101 + 10 * k:s0 + 399, ["open", "high", "low", "close"]] = 4.0 * (0.7 if k % 2 else 1.2)
+    ev = events(df, codes)
+    mkt = market(df)
+    ev = rs.features(ev, df, pd.Series(1.0, index=pd.DatetimeIndex(df["date"].unique())), market_features(df), mkt)
+    ev = rs.entry_features(ev, df, 20, market_features(df))
+    grid = [(e, hh) for e in rs.ENTRIES for hh in rs.HOLDS]
+    cols = {}
+    for e, hh in grid:
+        cols.update(rs.trades(ev, df, mkt, e, hh))
+    ev = pd.concat([ev, pd.DataFrame(cols)], axis=1)
+    pick = ev[ev["g_close20:60"].notna()].reset_index(drop=True)
+    args = argparse.Namespace(pick="close20:60", min_ratio=rs.MIN_RATIO)
+    tried = rs.explore(pick, ev, df, mkt, "close20:60", 50.0, grid, args)
+    n_buckets = sum(len(b) for _, filters in rs.explore_groups(pick, rs.MIN_RATIO, 20) for _, b in filters)
+    assert tried == n_buckets + len(grid) + len(rs.STOPS)
+    assert "AT THE ENTRY (the day 20 close)" in capsys.readouterr().out

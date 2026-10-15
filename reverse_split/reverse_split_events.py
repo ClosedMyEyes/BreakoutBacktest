@@ -318,6 +318,33 @@ def features(ev, df, spx_above200, market=None, mkt=None):
     return ev
 
 
+def entry_features(ev, df, off, market):
+    """What is known at the close of a later entry (day `off`), for --explore and --only: the move and the highest
+    high since the day 0 close, how far the entry is below that high, the printed price, the $ volume, the volume
+    since day 0 against before the split, and the S&P. NaN when the stock stopped trading before day `off`."""
+    c = df["close"].to_numpy(np.float64)
+    hh = np.where(np.isfinite(df["high"].to_numpy(np.float64)), df["high"].to_numpy(np.float64), -np.inf)
+    u = df["unadj_close"].to_numpy(np.float64)
+    r, last, first = ev["row"].to_numpy(), ev["last"].to_numpy(), ev["first"].to_numpy()
+    ok = r + off <= last
+    e = np.where(ok, r + off, r)
+    peak = np.array([hh[i + 1:i + off + 1].max() if k else -np.inf for i, k in zip(r, ok)])
+    peak = np.where(np.isfinite(peak), peak, np.nan)
+    sh = df["turnover"].to_numpy(np.float64) / np.where(c > 0, c, np.nan)     # split-consistent shares
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ev["since0"] = np.where(ok, (c[e] / c[r] - 1) * 100, np.nan)
+        ev["peak_since0"] = (peak / c[r] - 1) * 100
+        ev["off_peak"] = np.where(ok, (1 - c[e] / peak) * 100, np.nan)
+        ev["px_e"] = np.where(ok, u[e], np.nan)
+        ev["dv_e_m"] = np.where(ok, df["dv50"].to_numpy(np.float64)[e] / 1e6, np.nan)
+        usual = window_mean(sh, r, VOL_BASE[0], VOL_BASE[1], first)
+        since = window_mean(sh, np.where(ok, r, first), 1, off, first)       # in range when not ok
+        ev["vol_since_x"] = np.where(ok, since / usual, np.nan)
+    m = market["spx_above200"].reindex(pd.DatetimeIndex(df["date"].to_numpy()[e])).to_numpy(np.float64)
+    ev["spx_above200_e"] = np.where(ok, m, np.nan)
+    return ev
+
+
 def trades(ev, df, mkt, entry, hold, stop_pct=0.0):
     """The short for one entry and hold, before any borrow. Returns columns named entry:hold:
     g_ (short after the round trip, %), h_ / n_ (the same hedged with the S&P / Nasdaq
@@ -543,14 +570,25 @@ def by_period(g, name, fee, key):
     return pd.DataFrame(rows)
 
 
-def explore_groups(g, min_ratio):
-    """The --explore families: (family, [(filter, [(bucket, mask)])]), all known at the day 0 close."""
+def explore_groups(g, min_ratio, off=0):
+    """The --explore families: (family, [(filter, [(bucket, mask)])]), known at the day 0 close, and with a later
+    close entry (off > 0) also at the entry close."""
     pct = lambda x: f"{x:g}%"
     xs = lambda x: f"{x:g}x"
     money = lambda x: f"${x:g}"
     flag = lambda col, yes, no: [(yes, (g[col] == 1).to_numpy()), (no, (g[col] == 0).to_numpy())]
     pn = g["prior_n"]
-    return [
+    at_entry = []
+    if off and "since0" in g:
+        at_entry = [(f"AT THE ENTRY (the day {off} close)", [
+            ("move since day 0", bins_of(g["since0"], [-np.inf, -50, -25, 0, 25, np.inf], pct)),
+            ("high since day 0", bins_of(g["peak_since0"], [-np.inf, 0, 25, 50, 100, np.inf], pct)),
+            ("below that high", bins_of(g["off_peak"], [0, 10, 25, 50, np.inf], pct)),
+            ("printed price", bins_of(g["px_e"], [0, 1, 2, 5, np.inf], money)),
+            ("$ volume, $M/day", bins_of(g["dv_e_m"], DV_EDGES, money)),
+            ("volume since day 0 vs before", bins_of(g["vol_since_x"], [0, 1, 2, 5, np.inf], xs)),
+            ("S&P vs 200-day", flag("spx_above200_e", "above", "below"))])]
+    return at_entry + [
         ("DOWNTREND (the stock before day 0)", [
             ("60-day move", bins_of(g["run60"], RUN_EDGES, pct)),
             ("120-day move", bins_of(g["move120"], [-np.inf, -75, -50, -25, 0, np.inf], pct)),
@@ -610,13 +648,15 @@ def explore(pick, ev, df, mkt, name, fee, grid, args):
     """--explore: tables for refining the selection on Dev, each split by 5-year block. Prints
     them and returns the number of rows (tries)."""
     tried = 0
+    off, kind = ENTRIES[parse_pick(args.pick)[0]]
+    hold = parse_pick(args.pick)[1]
     print(f"\nEXPLORE ({len(pick):,} trades of {args.pick} at {fee:g}%/yr borrow). Each row: trades, ret and its "
           f"month-clustered t, hedged with the S&P, the average ret in each 5-year block, blocks_up = blocks with "
           f"ret above 0, win_%, adv50_% (went {ADVERSE:g}%+ against first), be_fee, x3_% (the high reached 3x the "
-          f"entry before the cover) and the worst trade. Everything is known at the day 0 "
+          f"entry before the cover) and the worst trade. Everything is known by the entry "
           f"close. Many rows will look good by chance: a filter is worth keeping only if it holds in every block "
           f"and there is a reason for it.")
-    for family, filters in explore_groups(pick, args.min_ratio):
+    for family, filters in explore_groups(pick, args.min_ratio, off if kind == "close" else 0):
         rows = []
         for flt, buckets in filters:
             for label, mask in buckets:
@@ -630,8 +670,6 @@ def explore(pick, ev, df, mkt, name, fee, grid, args):
     print(f"\nEVERY ENTRY AND HOLD by block, at {fee:g}%/yr: does a shorter or longer hold hold up better?")
     print(pd.DataFrame(rows).round(2).to_string(index=False))
 
-    off, kind = ENTRIES[parse_pick(args.pick)[0]]
-    hold = parse_pick(args.pick)[1]
     rows = []
     for stop in [0] + STOPS:
         if stop:
@@ -807,7 +845,9 @@ def main():
                              "px0, dv_m, run60, day0, prior_n, and for flags 1:2 = yes, e.g. spx_above200:1:2 or "
                              "in_index:0:1 for not an index member; also "
                              "move120, move250, from_high, above50, vol10_x, vol50_x, vol0_x, spx_above50, spx_trend, "
-                             "spx_move20, comp_above200, breadth); may be given more than once")
+                             "spx_move20, comp_above200, breadth; with a close5 / close20 pick also since0, "
+                             "peak_since0, off_peak, px_e, dv_e_m, vol_since_x, spx_above200_e at the entry close); "
+                             "may be given more than once")
     parser.add_argument("--frozen", action="store_true",
                         help=f"The rule frozen for the holdout on {FROZEN_SET}: --pick {FROZEN_PICK} --only "
                              f"{' --only '.join(FROZEN_ONLY)} (README)")
@@ -869,6 +909,8 @@ def main():
     pd.set_option("display.width", 250)
     years = ce.span_years(ev["date"])
     ev = features(ev, df, spx200, market, mkt)
+    if ENTRIES[entry][1] == "close" and ENTRIES[entry][0] > 0:
+        ev = entry_features(ev, df, ENTRIES[entry][0], market)
     if args.only:
         ev = keep_only(ev, args.only)
         print(f"Kept {len(ev):,} events with {' and '.join(args.only)}.")
