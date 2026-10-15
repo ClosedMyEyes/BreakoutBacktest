@@ -113,6 +113,8 @@ RUN_BARS = 60                       # the move before day 0
 LOAD_PAD_DAYS = 1200                # calendar days loaded before --start: 3 years for the prior-split flag
 TAIL_DAYS = 430                     # calendar days loaded after --end: close20 + 250 bars
 RATIO_BINS = [5, 20]                # 1-for-5, 1-for-20
+EXPLORE_RATIO_BINS = [5, 20, 50, 100]           # --explore splits the big ratios further (tiny floats)
+SPIKE = 200.0                                   # x3_% = share whose high reached 3x the entry (+200%)
 RATIO_DIST = [1.4, 2, 5, 10, 20, 50, 100, np.inf]
 PRE_PRICE_EDGES = [0, 0.5, 1, np.inf]           # printed close on day -1, $
 PRICE_BINS = [2, 5, 10]                         # printed close on day 0, $, above --min-price
@@ -566,7 +568,7 @@ def explore_groups(g, min_ratio):
             ("last 50 vs 200 before", bins_of(g["vol50_x"], [0, 0.75, 1, 1.5, np.inf], xs)),
             ("day 0 vs usual", bins_of(g["vol0_x"], [0, 2, 5, np.inf], xs))]),
         ("THE SPLIT", [
-            ("ratio", bins_of(g["ratio"], edges_of(min_ratio, RATIO_BINS), lambda x: f"1-for-{x:g}")),
+            ("ratio", bins_of(g["ratio"], edges_of(min_ratio, EXPLORE_RATIO_BINS), lambda x: f"1-for-{x:g}")),
             ("splits in past 3 yrs", [("none", (pn == 0).to_numpy()), ("1", (pn == 1).to_numpy()),
                                       ("2+", (pn >= 2).to_numpy())]),
             ("printed price day -1", bins_of(g["px_prev"], PRE_PRICE_EDGES, money)),
@@ -596,6 +598,9 @@ def block_row(s, name, fee):
     row["blocks_up"] = f"{up}/{n}"
     for k in ["win_%", "adv50_%", "be_fee"]:
         row[k] = st.get(k, np.nan)
+    pk = s[f"peak_{name}"].where(s[f"g_{name}"].notna()).dropna() if len(s) else pd.Series(dtype=float)
+    row["x3_%"] = (pk >= SPIKE).mean() * 100 if len(pk) else np.nan
+    row["worst"] = st.get("worst", np.nan)
     return row
 
 
@@ -605,7 +610,8 @@ def explore(pick, ev, df, mkt, name, fee, grid, args):
     tried = 0
     print(f"\nEXPLORE ({len(pick):,} trades of {args.pick} at {fee:g}%/yr borrow). Each row: trades, ret and its "
           f"month-clustered t, hedged with the S&P, the average ret in each 5-year block, blocks_up = blocks with "
-          f"ret above 0, win_%, adv50_% (went {ADVERSE:g}%+ against first), be_fee. Everything is known at the day 0 "
+          f"ret above 0, win_%, adv50_% (went {ADVERSE:g}%+ against first), be_fee, x3_% (the high reached 3x the "
+          f"entry before the cover) and the worst trade. Everything is known at the day 0 "
           f"close. Many rows will look good by chance: a filter is worth keeping only if it holds in every block "
           f"and there is a reason for it.")
     for family, filters in explore_groups(pick, args.min_ratio):

@@ -310,11 +310,14 @@ def test_filter_table_and_the_sizing_check():
     for k in ["h", "n"]:
         g[f"{k}_{name}"] = g[f"g_{name}"]
     g[f"y_{name}"], g[f"adv_{name}"], g[f"del_{name}"] = 0.0, 0.0, 0.0      # no borrow, to keep the sums simple
+    g[f"peak_{name}"] = [10.0] * 7 + [250.0]                              # one ran to 3.5x the entry
     t = rs.filter_table(g, name, 50.0).set_index("filter")
     assert t.loc["all trades", "trades"] == 8 and np.isclose(t.loc["all trades", "total"], 100.0)
     dv = t.loc["$1M+ a day traded"]
     assert dv["trades"] == 4 and np.isclose(dv["ret"], 30.0) and np.isclose(dv["ret_dropped"], -5.0)
     assert np.isclose(dv["total_vs_all_%"], 120.0)
+    row = rs.block_row(g, name, 50.0)
+    assert np.isclose(row["x3_%"], 12.5) and np.isclose(row["worst"], -22.0)
     na, ra, nb, rb, diff, tw = rs.sizing_check(g, name, 50.0)
     assert (na, nb) == (4, 4) and np.isclose(ra, 30.0) and np.isclose(rb, -5.0) and np.isclose(diff, 35.0)
     assert tw > 2

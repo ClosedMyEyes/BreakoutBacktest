@@ -107,8 +107,11 @@ known at the day 0 close:
   the S&P's 20-day move, the Nasdaq against its 200-day, and the share of stocks above their 200-day.
 - **Volume** (split-consistent shares, turnover / adjusted close): the last 10 days against the usual
   (days -60 to -11), the last 50 days against the 200 before them, and day 0 against the usual.
-- **The split and size:** the ratio, how many reverse splits in the past 3 years (0, 1, 2+), the printed
+- **The split and size:** the ratio (with 1-for-20 to 50, 50 to 100 and 100+ apart, since the biggest
+  ratios leave the smallest floats), how many reverse splits in the past 3 years (0, 1, 2+), the printed
   price on day -1, the day 0 move, dollar volume and index.
+- Every row also shows x3_%, the share whose high reached 3x the entry before the cover, and the worst
+  trade, to find where the squeezes come from.
 - **Every entry and hold** by block, at the pick's fee.
 - **Stops on the pick:** cover when a day's high reaches +300, +200, +100 or +50% above the entry, at the
   stop or at the open when it gapped above it, with the share stopped, the worst trade, the 1-in-20 worst
