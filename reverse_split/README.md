@@ -5,7 +5,8 @@
 year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed.
 The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account a short and 1% on 1-for-100+
 splits, which cut the locked half's worst drop from 40% to 22% (set after the run). See "Holdout result" at
-the end.
+the end. **The day 20 to 80 short is frozen too (2026-10-15) and waits for its one holdout run;** see its
+section at the end.
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -139,7 +140,9 @@ Flags are 0 or 1, so `col:1:2` keeps the yes side. The explore columns for `--on
 `move250`, `from_high`, `above50`, `vol10_x`, `vol50_x`, `vol0_x`, `spx_above50`, `spx_trend`, `spx_move20`,
 `comp_above200`, `breadth` and `prior_n`, on top of `ratio`, `px_prev`, `px0`, `dv_m`, `run60`, `day0`,
 `above200` and `spx_above200`. With a `close5` or `close20` pick, the entry columns are `since0`,
-`peak_since0`, `off_peak`, `px_e`, `dv_e_m`, `vol_since_x` and `spx_above200_e`.
+`peak_since0`, `off_peak`, `px_e`, `dv_e_m`, `vol_since_x` and `spx_above200_e`. With one of those in
+`--only`, the every-entry-and-hold table leaves out the entries before the pick's, since they would be
+picked with what happened after them.
 
 ## The frozen rule (set 2026-10-15, after exploring Dev, before the holdout)
 
@@ -157,7 +160,7 @@ trade is the same size. The run prints it under the pass bar.
 
 `--frozen` prints only this rule: no other entries or holds and no day-by-day table, so the holdout's days
 after the cover stay unseen. The day 20 to 80 short in the same group (+14.6% on Dev) is its own setup,
-to be explored on Dev later. The filter table (below) prints as context.
+frozen later as `--frozen 20-80` (its section is at the end). The filter table (below) prints as context.
 
 Why this rule, from Dev (314 tries by then: 132 in the first run and 91 in each explore run):
 
@@ -312,3 +315,49 @@ Nasdaq's Daily List, the broker's corporate actions page, or an SEC full-text se
 What to expect, from the locked half: about 16 trades a year, about 1.3 shorts open at once, +11.6% a trade
 after borrow, 3.4% a year for the account at this size and a worst drop of about 22%. A 13D or a big
 deal while short is worth a look by hand, but covering on one is untested.
+
+## The day 20 to 80 short (frozen 2026-10-15, before its holdout run)
+
+**Rule (`--frozen 20-80` = `--pick close20:60 --only ratio:20:inf --only in_index:0:1 --only
+off_peak:25:inf --only dv_m:1:inf --only px_e:1:inf --only spx_above200_e:1:2`):** the same splits as the
+0-20 rule (1-for-20+, not in the S&P 500, 400 or 600 or the Russell 2000, same universe on day 0) with $1M+
+a day traded (50-day) on day 0. At the day 20 close, the stock is 25%+ below its highest high since day 0
+and prints $1+, and the S&P is above its 200-day. Short at the day 20 close and cover at the close 60
+trading days later (day 80), no stop. Judged at **50% a year borrow** with the same four checks. Sizing as
+for the 0-20 short: 2% of the account a short and 1% on 1-for-100+ (the account table prints both).
+
+**S&P check, set the same day as context (not part of the pass bar):** the run also prints the trades that
+every other filter keeps and the S&P filter drops. On Dev they were 26 trades at +1.9% a trade, against
++26.5% for the rule. The rule keeps the filter whatever the holdout shows.
+
+Why this rule, from Dev (242 more tries in two explore runs of 121 rows, on top of the 314 before the
+first freeze):
+
+- In the 0-20 group, `close20:60` made +15.6% a trade (285 trades, t 3.5), but its worst trade lost 694%
+  and the account at 2% a short dropped 32%.
+- How far the stock had faded from its post-split high by day 20 split it. Within 10% of the high: -32.2%
+  (16 trades); 10-25% below: +3.7% (40); 25-50% below: +13.5% (112, up in 4 of 4 blocks); 50%+ below:
+  +28.3% (117, 3 of 3). The stocks still near the high are squeezes still running.
+- Under $1M a day traded on day 0: +1.8% (84 trades, up in 1 of 4 blocks), against about +21% for the
+  rest. This filter also held on the locked half for the 0-20 short.
+- Under $1 at day 20: the 15 trades did best (+38%), but these are the hardest to borrow and short, so the
+  rule asks for $1 as on day 0.
+- Inside those three (162 trades, +22.5%, t 5.8, up in every block), the S&P at the day 20 close split it:
+  above its 200-day +26.5% (136 trades, t 7.1, up in every block), below +1.9% (26 trades, t 0.2, -25.6% in
+  2025+). Above beat below in every block that had both. A likely reason: a three-month short that starts
+  in a weak market runs into its rebound, and these stocks bounce hardest. The S&P on day 0 split it less
+  (above +23.6%, below +15.8%, both up in every block), the worst Dev trade (-225%) is in the below group
+  (about +11% without it), and the S&P filters failed on the locked half for the 0-20 short. That is why
+  the dropped trades print again on the holdout.
+- Every stop made it worse again (+300%: +12.2% a trade), so there is none. A longer hold made a little
+  more (`close20:120` +29.1%), but the hold was set at 60 before exploring.
+- Only one Dev trade is from 2010-14, and most are from 2022 on.
+
+On Dev the rule is 136 trades at +26.5% a trade (t 7.1, up in every block, win 76%, break-even borrow
+166% a year, worst -216%). `--frozen 20-80` prints only this rule, like `--frozen`, so the holdout's other
+entries and holds stay unseen. On Dev first, then the holdout once, with no changes after it:
+
+```
+python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen 20-80
+python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen 20-80 --universe holdout --unlock-holdout
+```

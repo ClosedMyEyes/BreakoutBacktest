@@ -287,11 +287,15 @@ def test_explore_prints_every_family_and_counts_its_tries(capsys):
 
 
 def test_frozen_sets_the_pick_and_filter_and_refuses_overrides():
-    ns = lambda **kw: argparse.Namespace(**{"frozen": False, "pick": None, "only": [], **kw})
+    ns = lambda **kw: argparse.Namespace(**{"frozen": None, "pick": None, "only": [], **kw})
     assert rs.apply_frozen(ns()).pick == rs.PICK
-    a = rs.apply_frozen(ns(frozen=True))
+    a = rs.apply_frozen(ns(frozen="0-20"))
     assert (a.pick, a.only) == ("close0:20", ["ratio:20:inf", "in_index:0:1"])
-    for bad in [ns(frozen=True, pick="close0:60"), ns(frozen=True, only=["ratio:5:20"])]:
+    a = rs.apply_frozen(ns(frozen="20-80"))
+    assert (a.pick, a.only) == ("close20:60", ["ratio:20:inf", "in_index:0:1", "off_peak:25:inf", "dv_m:1:inf",
+                                               "px_e:1:inf", "spx_above200_e:1:2"])
+    assert a.only is not rs.FROZEN["20-80"]["only"]
+    for bad in [ns(frozen="0-20", pick="close0:60"), ns(frozen="20-80", only=["ratio:5:20"])]:
         try:
             rs.apply_frozen(bad)
             assert False
@@ -382,3 +386,17 @@ def test_explore_with_a_day_20_entry_adds_the_entry_family(capsys):
     n_buckets = sum(len(b) for _, filters in rs.explore_groups(pick, rs.MIN_RATIO, 20) for _, b in filters)
     assert tried == n_buckets + len(grid) + len(rs.STOPS)
     assert "AT THE ENTRY (the day 20 close)" in capsys.readouterr().out
+
+
+def test_a_filter_at_the_entry_close_hides_the_earlier_entries():
+    grid = [(e, hh) for e in rs.ENTRIES for hh in rs.HOLDS]
+    assert rs.entry_grid(grid, "close20", ["ratio:20:inf"]) == grid
+    assert rs.entry_grid(grid, "close20", ["ratio:20:inf", "off_peak:25:inf"]) == [("close20", hh) for hh in rs.HOLDS]
+    assert {e for e, _ in rs.entry_grid(grid, "close5", ["px_e:1:inf"])} == {"close5", "close20"}
+
+
+def test_left_out_keeps_what_every_other_filter_keeps_and_this_one_drops():
+    ev = pd.DataFrame({"ratio": [30, 30, 30, 10], "spx_above200_e": [1.0, 0.0, np.nan, 0.0]})
+    out = rs.left_out(ev, ["ratio:20:inf", "spx_above200_e:1:2"], "spx_above200_e:1:2")
+    assert out["spx_above200_e"].isna().tolist() == [False, True] and out["spx_above200_e"].iloc[0] == 0.0
+    assert len(rs.keep_only(ev, ["ratio:20:inf", "spx_above200_e:1:2"])) + len(out) == 3

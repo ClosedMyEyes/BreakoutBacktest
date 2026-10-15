@@ -34,7 +34,9 @@ studies (--explore also tries stops).
   pick      set before the first run: close0:60 judged at 50%/yr borrow (--pick close0:60
             --pick-fee 50). Every other row is context. After exploring Dev, the rule for the
             holdout was frozen on 2026-10-15 (--frozen): 1-for-20+ splits, not an index
-            member, close0:20
+            member, close0:20. The day 20 to 80 short in the same group was frozen the same
+            day (--frozen 20-80): close20:60, at the day 20 close 25%+ below the high since
+            day 0, $1+ printed, $1M+ a day traded at day 0 and the S&P above its 200-day
 
 Costs: a round trip (ce.round_trip_cost(), about 0.50%) plus the borrow fee for every
 trading day held (days / 252), at each of --borrow-pcts (5, 25, 50, 100, 200 % a year).
@@ -60,6 +62,7 @@ HOW TO RUN:
   python reverse_split/reverse_split_events.py --start 2010-01-01 --explore            # refine the selection on Dev
   python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only spx_above200:1:2   # within a filter
   python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout  # once
+  python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen 20-80 --universe holdout --unlock-holdout
 
 The run prints, in order: the counts and data checks, the day-by-day move around day 0,
 every entry and hold (with the fee ladder), the pick split by what was known at the
@@ -126,9 +129,21 @@ BLOCKS = ["2010-2014", "2015-2019", "2020-2024", "2025-2029"]   # the explore ta
 STOPS = [300, 200, 100, 50]                     # --explore: % above the entry (no stop is the first row)
 BIG_HOLD = 10 ** 6                              # lets lockup_events.account() take any cover row
 NEED_BLOCKS = ["2015-2019", "2020-2024", "2025-2029"]
-FROZEN_SET = "2026-10-15"                       # --frozen: the rule set for the one holdout run, after --explore
-FROZEN_PICK = "close0:20"
-FROZEN_ONLY = ["ratio:20:inf", "in_index:0:1"]  # 1-for-20 and up, not in the S&P 500/400/600 or Russell 2000
+FROZEN = {                                      # --frozen RULE: each set for its one holdout run, after --explore
+    "0-20": {"set": "2026-10-15", "pick": "close0:20",
+             "only": ["ratio:20:inf",           # 1-for-20 and up
+                      "in_index:0:1"],          # not in the S&P 500/400/600 or Russell 2000
+             "sizing": True},                   # the earlier-split sizing check below the pass bar
+    "20-80": {"set": "2026-10-15", "pick": "close20:60",
+              "only": ["ratio:20:inf", "in_index:0:1",
+                       "off_peak:25:inf",       # at the day 20 close, 25%+ below the high since day 0
+                       "dv_m:1:inf",            # $1M+ a day traded (50-day) at day 0
+                       "px_e:1:inf",            # $1+ printed at the day 20 close
+                       "spx_above200_e:1:2"],   # the S&P above its 200-day at the day 20 close
+              "left_out": "spx_above200_e:1:2",   # the trades this filter drops print as context
+              "left_out_label": "the S&P above its 200-day at the day 20 close"},
+}
+ENTRY_COLS = ["since0", "peak_since0", "off_peak", "px_e", "dv_e_m", "vol_since_x", "spx_above200_e"]
 FILTERS = [                                     # the filter table: (label, keep), each known at the day 0 close
     ("not after the S&P rose 5%+ in 20 days", lambda g: g["spx_move20"] < 5),
     ("S&P above its 200-day", lambda g: g["spx_above200"] == 1),
@@ -702,13 +717,29 @@ def explore(pick, ev, df, mkt, name, fee, grid, args):
 
 
 def apply_frozen(args):
-    """--frozen: the pick and filter set in the README on FROZEN_SET for the holdout run."""
+    """--frozen RULE: the pick and filters set in the README for that rule's holdout run."""
     if args.frozen:
         if args.only or args.pick is not None:
             raise SystemExit("--frozen sets --pick and --only itself; leave them out.")
-        args.pick, args.only = FROZEN_PICK, list(FROZEN_ONLY)
+        args.pick, args.only = FROZEN[args.frozen]["pick"], list(FROZEN[args.frozen]["only"])
     args.pick = args.pick or PICK
     return args
+
+
+def entry_grid(grid, entry, only):
+    """The entries and holds to print: with a filter on an entry-close column (ENTRY_COLS), only the entries at or
+    after the pick's, since an earlier entry would be chosen with what happened after it."""
+    if not any(spec.split(":")[0] in ENTRY_COLS for spec in only):
+        return grid
+    return [(e, hh) for e, hh in grid if ENTRIES[e][0] >= ENTRIES[entry][0]]
+
+
+def left_out(ev, only, spec):
+    """The events that pass every --only spec but `spec` and fail that one."""
+    rest = keep_only(ev, [s for s in only if s != spec])
+    col, lo, hi = spec.split(":")
+    v = rest[col].astype(float)
+    return rest[~((v >= float(lo)) & (v < float(hi)))].reset_index(drop=True)
 
 
 def filter_table(g, name, fee):
@@ -848,9 +879,11 @@ def main():
                              "spx_move20, comp_above200, breadth; with a close5 / close20 pick also since0, "
                              "peak_since0, off_peak, px_e, dv_e_m, vol_since_x, spx_above200_e at the entry close); "
                              "may be given more than once")
-    parser.add_argument("--frozen", action="store_true",
-                        help=f"The rule frozen for the holdout on {FROZEN_SET}: --pick {FROZEN_PICK} --only "
-                             f"{' --only '.join(FROZEN_ONLY)} (README)")
+    parser.add_argument("--frozen", nargs="?", const="0-20", default=None, choices=list(FROZEN),
+                        help="A rule frozen for its holdout run (README): "
+                             + "; ".join(f"{k} = --pick {v['pick']} --only {' --only '.join(v['only'])}"
+                                         for k, v in FROZEN.items())
+                             + ". --frozen alone is 0-20")
     parser.add_argument("--explore", action="store_true",
                         help="Only the tables for refining the selection: filters, holds and stops, by 5-year block")
     parser.add_argument("--sizes", type=str, default=SIZES,
@@ -911,6 +944,8 @@ def main():
     ev = features(ev, df, spx200, market, mkt)
     if ENTRIES[entry][1] == "close" and ENTRIES[entry][0] > 0:
         ev = entry_features(ev, df, ENTRIES[entry][0], market)
+    rule = FROZEN[args.frozen] if args.frozen else {}
+    dropped = left_out(ev, args.only, rule["left_out"]) if rule.get("left_out") else None
     if args.only:
         ev = keep_only(ev, args.only)
         print(f"Kept {len(ev):,} events with {' and '.join(args.only)}.")
@@ -927,6 +962,7 @@ def main():
     grid = [(e, hh) for e in ENTRIES for hh in HOLDS]
     if (entry, hold) not in grid:
         grid.append((entry, hold))
+    grid = entry_grid(grid, entry, args.only)
     if args.frozen:
         grid = [(entry, hold)]          # only the frozen rule: other entries and holds stay unseen on the holdout
     name = f"{entry}:{hold}"
@@ -1020,7 +1056,7 @@ def main():
           f"turns the sign and holds in every 5-year block.")
     print(split_table(pick, name, fee, low, years, groups).round(2).to_string(index=False))
     if args.frozen:
-        print(f"\nFILTERS, context set on {FROZEN_SET} and not part of the rule: keeping only the trades that pass "
+        print(f"\nFILTERS, context set on {rule['set']}: keeping only the trades that pass "
               f"each one, at {fee:g}%/yr. kept_% = share of the trades kept; ret_dropped = the average of the ones it "
               f"drops; total = trades x ret (% of one position), the profit if every trade is the same size.")
         print(filter_table(pick, name, fee).round(2).to_string(index=False))
@@ -1145,9 +1181,9 @@ def main():
         (f"4. still positive without day 0 from {COVID[0]} to {COVID[1]}", f"{st_ex.get('ret', np.nan):+.2f}%",
          st_ex.get("ret", -1) > 0),
     ]
-    rule = f"the rule frozen on {FROZEN_SET}" if args.frozen else "the pick"
+    what = f"the {args.frozen} rule frozen on {rule['set']}" if args.frozen else "the pick"
     only = "".join(f", {spec}" for spec in args.only)
-    print(f"\nPASS BAR, set before the first run (README): {rule} ({args.pick}{only}, no stop, $"
+    print(f"\nPASS BAR, set before the first run (README): {what} ({args.pick}{only}, no stop, $"
           f"{P['min_price']:g} printed, top {P['liq_top_pct']:g}% by $ volume, first reverse split in {args.dedupe} "
           f"bars), all four. This run: {args.universe} from {args.start or 'the first bar'}.")
     for label, value, ok in checks:
@@ -1155,16 +1191,24 @@ def main():
     verdict = "PASSES on this data" if all(ok for _, _, ok in checks) else "does not pass"
     print(f"  -> {verdict}. " + ("A Dev pass is not a result: freeze the rule in the README, then run the holdout once."
                                  if args.universe == "dev" else "This is the one holdout run: no changes after it."))
-    if args.frozen:
+    if rule.get("sizing"):
         na, ra, nb, rb, diff, tw = sizing_check(pick, name, fee)
         ok_size = diff > 0 and tw > 2
         print(f"  Sizing check, set the same day: trades with an earlier reverse split in 3 years beat the rest by "
               f"more than 0 with a Welch t above 2 ({na} trades {ra:+.2f}% against {nb} trades {rb:+.2f}%, difference "
               f"{diff:+.2f}, t {tw:.2f})  {'yes' if ok_size else 'NO'} -> "
               + (f"earlier-split trades get {SIZE_UP:g}x the size." if ok_size else "every trade the same size."))
+    if dropped is not None:
+        d = pd.concat([dropped, pd.DataFrame(trades(dropped, df, mkt, entry, hold))], axis=1)
+        sd = stats(d, name, fee, years)
+        print(f"  Left out by {rule['left_out_label']} ({rule['left_out']}), set the same day as context: the "
+              f"trades every other filter keeps and this one drops made {sd.get('ret', np.nan):+.2f}% a trade "
+              f"({sd['trades']} trades, t {num(sd.get('t')):.2f}) against {st.get('ret', np.nan):+.2f}% for the "
+              f"rule. The rule keeps it either way.")
     if args.frozen:
         tries = 1
-        print(f"This run is the frozen rule's test: the pass bar and the sizing check. The {n_buckets} split buckets "
+        checks_run = " and the sizing check" if rule.get("sizing") else ""
+        print(f"This run is the frozen rule's test: the pass bar{checks_run}. The {n_buckets} split buckets "
               f"and {len(FILTERS)} filters are context.")
     else:
         print(f"Tries in this run: {len(grid)} entry x hold rows at {len(fees)} fees and {n_buckets} split buckets = "
