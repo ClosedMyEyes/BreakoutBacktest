@@ -321,3 +321,24 @@ def test_filter_table_and_the_sizing_check():
     na, ra, nb, rb, diff, tw = rs.sizing_check(g, name, 50.0)
     assert (na, nb) == (4, 4) and np.isclose(ra, 30.0) and np.isclose(rb, -5.0) and np.isclose(diff, 35.0)
     assert tw > 2
+
+
+def test_account_sized_matches_the_account_and_opens_a_short_at_its_scale():
+    df, codes = panel(toy("DOWN"), toy("UP"))
+    for s in ["DOWN", "UP"]:
+        reverse_split(df, start_of(df, s) + 80, 10)
+    df.loc[start_of(df, "DOWN") + 81:start_of(df, "UP") - 1, ["open", "high", "low", "close"]] = 3.0   # -25%
+    df.loc[start_of(df, "UP") + 81:, ["open", "high", "low", "close"]] = 6.0                           # +50%
+    ev = events(df, codes)
+    g = pd.concat([ev, pd.DataFrame(rs.trades(ev, df, market(df), "close0", 20))], axis=1)
+    g["short_0:20"] = rs.ret(g, "close0:20", 50)
+    spx = market(df)["spx_close"]
+    full, _ = rs.le.account(g, df, spx, 0, 20, 2.0, 50)
+    same, _ = rs.account_sized(g, df, spx, 0, 20, 2.0, 50, np.ones(len(g)))
+    pd.testing.assert_frame_equal(full, same)
+    up = (g["symbol"] == "UP").to_numpy()
+    half, _ = rs.account_sized(g, df, spx, 0, 20, 2.0, 50, np.where(up, 0.5, 1.0))
+    r = g["short_0:20"].to_numpy()
+    assert np.isclose(r[~up][0], 25.0 - rs.ce.round_trip_cost() - 50 * 20 / 252)
+    assert np.isclose(half["equity"].iloc[-1], 1 + 0.02 * r[~up][0] / 100 + 0.01 * r[up][0] / 100)
+    assert half["equity"].iloc[-1] > full["equity"].iloc[-1]

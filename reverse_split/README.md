@@ -254,3 +254,14 @@ lost 632% at the cover; the next were EDVA -281% and RSLS -185% (peak 11x). The 
 3.6% a year with a worst drop of 39.6% (June to July 2026). At 5% it grew 8.6% a year but dropped 98.5%. On
 average 1.25 shorts were open (at most 11), so little of the account is used. At 1% a short, a DFNS costs
 about 6% of the account at the cover and about 20% at its peak, and the account grows about 2% a year.
+
+**Half size on 1-for-100+ (added after the holdout run).** Three of the five biggest spikes on the locked
+half were 1-for-70 or more. On Dev, 1-for-100+ splits reached 3x the entry most often (7.7% of 39 trades,
+against 3.4% of 208 for 1-for-20 to 50) but lost no more by the cover (+18.91% a trade). So the account
+table now also shows each size with the 1-for-100+ shorts at half size (`size_100+_%`). It was picked after
+seeing DFNS (1-for-125), so the locked half is not a clean test of it.
+
+DFNS's 13D (a 16.7% holder, filed after the close on July 24, the Friday before the run) was not a
+purchase: the company issued those shares to pay for 60% of a drone maker, a deal announced on July 10,
+before the split. Covering on a 13D would have saved this trade, but filings aren't in the data, so it
+is untested.
