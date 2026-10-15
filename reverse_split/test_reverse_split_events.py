@@ -400,3 +400,21 @@ def test_left_out_keeps_what_every_other_filter_keeps_and_this_one_drops():
     out = rs.left_out(ev, ["ratio:20:inf", "spx_above200_e:1:2"], "spx_above200_e:1:2")
     assert out["spx_above200_e"].isna().tolist() == [False, True] and out["spx_above200_e"].iloc[0] == 0.0
     assert len(rs.keep_only(ev, ["ratio:20:inf", "spx_above200_e:1:2"])) + len(out) == 3
+
+
+def test_combined_puts_both_frozen_rules_in_one_account(capsys):
+    df, codes = panel(toy("S"))
+    r = start_of(df, "S") + 80
+    reverse_split(df, r, 30)
+    df.loc[r + 5, "high"] = 6.0                                                    # the post-split high
+    df.loc[r + 6:, ["open", "high", "low", "close", "unadj_close"]] = 3.0          # 50% below it from day 6 on
+    mkt = market(df)
+    ev = rs.features(events(df, codes), df, pd.Series(1.0, index=pd.DatetimeIndex(df["date"].unique())),
+                     market_features(df), mkt)
+    out = rs.combined(rs.entry_features(ev, df, 20, market_features(df)), df, mkt, 50.0, [2.0])
+    assert out["rules"].tolist() == ["0-20", "20-80", "both"] and out["trades"].tolist() == [1, 1, 2]
+    cost = rs.ce.round_trip_cost()
+    r1, r2 = 25.0 - cost - 50 * 20 / 252, -cost - 50 * 60 / 252                   # day 0 to 20, then flat to 80
+    assert np.isclose(out["ret"].iloc[0], r1) and np.isclose(out["ret"].iloc[1], r2)
+    assert np.isclose(out["x_start"].iloc[2], 1 + 0.02 * r1 / 100 + 0.02 * (1 + 0.02 * r1 / 100) * r2 / 100)
+    assert "1 of the 1 20-80 shorts follow a 0-20 short" in capsys.readouterr().out
