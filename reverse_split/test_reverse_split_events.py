@@ -283,3 +283,16 @@ def test_explore_prints_every_family_and_counts_its_tries(capsys):
     for head in ["DOWNTREND", "MARKET", "VOLUME", "THE SPLIT", "SIZE", "EVERY ENTRY AND HOLD", "STOPS"]:
         assert head in text
     assert "2010-14" in text and "acct2_maxdd" in text
+
+
+def test_frozen_sets_the_pick_and_filter_and_refuses_overrides():
+    ns = lambda **kw: argparse.Namespace(**{"frozen": False, "pick": None, "only": [], **kw})
+    assert rs.apply_frozen(ns()).pick == rs.PICK
+    a = rs.apply_frozen(ns(frozen=True))
+    assert (a.pick, a.only) == ("close0:20", ["ratio:20:inf"])
+    for bad in [ns(frozen=True, pick="close0:60"), ns(frozen=True, only=["ratio:5:20"])]:
+        try:
+            rs.apply_frozen(bad)
+            assert False
+        except SystemExit:
+            pass

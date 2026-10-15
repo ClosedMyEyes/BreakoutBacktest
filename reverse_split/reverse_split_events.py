@@ -32,7 +32,8 @@ studies (--explore also tries stops).
             short); an upward one counts as a real loss. A trade still open when the data
             ends is left out
   pick      set before the first run: close0:60 judged at 50%/yr borrow (--pick close0:60
-            --pick-fee 50). Every other row is context
+            --pick-fee 50). Every other row is context. After exploring Dev, the rule for the
+            holdout was frozen on 2026-10-15 (--frozen): 1-for-20+ splits, close0:20
 
 Costs: a round trip (ce.round_trip_cost(), about 0.50%) plus the borrow fee for every
 trading day held (days / 252), at each of --borrow-pcts (5, 25, 50, 100, 200 % a year).
@@ -57,7 +58,7 @@ HOW TO RUN:
   python reverse_split/reverse_split_events.py --start 2010-01-01 --only ratio:5:20    # one bucket, by block
   python reverse_split/reverse_split_events.py --start 2010-01-01 --explore            # refine the selection on Dev
   python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only spx_above200:1:2   # within a filter
-  python reverse_split/reverse_split_events.py --start 2010-01-01 --universe holdout --unlock-holdout   # once, frozen
+  python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout  # once
 
 The run prints, in order: the counts and data checks, the day-by-day move around day 0,
 every entry and hold (with the fee ladder), the pick split by what was known at the
@@ -122,6 +123,10 @@ BLOCKS = ["2010-2014", "2015-2019", "2020-2024", "2025-2029"]   # the explore ta
 STOPS = [300, 200, 100, 50]                     # --explore: % above the entry (no stop is the first row)
 BIG_HOLD = 10 ** 6                              # lets lockup_events.account() take any cover row
 NEED_BLOCKS = ["2015-2019", "2020-2024", "2025-2029"]
+FROZEN_SET = "2026-10-15"                       # --frozen: the rule set for the one holdout run, after --explore
+FROZEN_PICK = "close0:20"
+FROZEN_ONLY = ["ratio:20:inf"]                  # 1-for-20 and up
+SECOND = "close20:60"                           # set the same day: short the day 20 close, cover day 80
 SIZES = "2,5"                                   # account test: each short is X% of the account
 WORST = 10
 
@@ -637,6 +642,16 @@ def explore(pick, ev, df, mkt, name, fee, grid, args):
     return tried
 
 
+def apply_frozen(args):
+    """--frozen: the pick and filter set in the README on FROZEN_SET for the holdout run."""
+    if args.frozen:
+        if args.only or args.pick is not None:
+            raise SystemExit("--frozen sets --pick and --only itself; leave them out.")
+        args.pick, args.only = FROZEN_PICK, list(FROZEN_ONLY)
+    args.pick = args.pick or PICK
+    return args
+
+
 def num(x):
     return np.nan if x is None else x
 
@@ -686,7 +701,7 @@ def main():
     parser.add_argument("--universe", choices=["dev", "holdout", "all"], default="dev")
     parser.add_argument("--unlock-holdout", action="store_true",
                         help="Required for holdout/all. Only once the rule is frozen.")
-    parser.add_argument("--pick", type=str, default=PICK,
+    parser.add_argument("--pick", type=str, default=None,
                         help="entry:hold, entry close0 / open1 / close5 / close20, hold in days (close0:60)")
     parser.add_argument("--pick-fee", type=float, default=PICK_FEE,
                         help="Borrow fee the pick is judged at, %% a year (50)")
@@ -702,6 +717,9 @@ def main():
                              "px0, dv_m, run60, day0, prior_n, and for flags 1:2 = yes, e.g. spx_above200:1:2; also "
                              "move120, move250, from_high, above50, vol10_x, vol50_x, vol0_x, spx_above50, spx_trend, "
                              "spx_move20, comp_above200, breadth); may be given more than once")
+    parser.add_argument("--frozen", action="store_true",
+                        help=f"The rule frozen for the holdout on {FROZEN_SET}: --pick {FROZEN_PICK} --only "
+                             f"{' --only '.join(FROZEN_ONLY)} (README)")
     parser.add_argument("--explore", action="store_true",
                         help="Only the tables for refining the selection: filters, holds and stops, by 5-year block")
     parser.add_argument("--sizes", type=str, default=SIZES,
@@ -709,7 +727,7 @@ def main():
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
     parser.add_argument("--save-events", type=str, default=None, help="Write every event to this CSV")
     parser.add_argument("--no-log", action="store_true", help="Don't add a row to the research log")
-    args = parser.parse_args()
+    args = apply_frozen(parser.parse_args())
     P = collect(args, ["universe"])
     entry, hold = parse_pick(args.pick)
     fees = [float(x) for x in args.borrow_pcts.split(",") if x.strip()]
@@ -972,14 +990,22 @@ def main():
         (f"4. still positive without day 0 from {COVID[0]} to {COVID[1]}", f"{st_ex.get('ret', np.nan):+.2f}%",
          st_ex.get("ret", -1) > 0),
     ]
-    print(f"\nPASS BAR, set before the first run (README): the pick ({args.pick}, no stop, $"
+    rule = f"the rule frozen on {FROZEN_SET}" if args.frozen else "the pick"
+    only = "".join(f", {spec}" for spec in args.only)
+    print(f"\nPASS BAR, set before the first run (README): {rule} ({args.pick}{only}, no stop, $"
           f"{P['min_price']:g} printed, top {P['liq_top_pct']:g}% by $ volume, first reverse split in {args.dedupe} "
-          f"bars) on Dev since 2010, all four. This run: {args.universe} from {args.start or 'the first bar'}.")
+          f"bars), all four. This run: {args.universe} from {args.start or 'the first bar'}.")
     for label, value, ok in checks:
         print(f"  {label}: {value}  {'yes' if ok else 'NO'}")
     verdict = "PASSES on this data" if all(ok for _, _, ok in checks) else "does not pass"
     print(f"  -> {verdict}. " + ("A Dev pass is not a result: freeze the rule in the README, then run the holdout once."
                                  if args.universe == "dev" else "This is the one holdout run: no changes after it."))
+    if args.frozen and f"g_{SECOND}" in ev:
+        s2 = stats(ev, SECOND, fee, years)
+        ok2 = s2.get("ret", -1) > 0 and (s2.get("t") or 0) > 2
+        print(f"  Second rule, set the same day: {SECOND} (short the day 20 close, cover day 80) in the same group, "
+              f"ret above 0 at {fee:g}%/yr with t above 2: {s2.get('ret', np.nan):+.2f}%, t {num(s2.get('t')):.2f}, "
+              f"{s2['trades']} trades  {'yes' if ok2 else 'NO'}")
     print(f"Tries in this run: {len(grid)} entry x hold rows at {len(fees)} fees and {n_buckets} split buckets = "
           f"{tries}. The pick is one of them; read the rest as context.")
 

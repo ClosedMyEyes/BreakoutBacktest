@@ -1,10 +1,10 @@
 # Reverse-split short
 
-**Status: exploring on Dev (since 2026-10-15). The holdout stays locked.** The pick and the pass bar below
-were set on 2026-10-14, before any run. The first Dev run passed all four checks, narrowly (close0:60 at
-50% a year: +6.78% a trade, t 2.05, 822 trades, 2010-14 negative, most trades since 2022), with a fat tail
-(the worst trade -1420%). Mark asked to refine the selection on Dev before the holdout, so the run has an
-`--explore` mode (below).
+**Status: rule frozen on 2026-10-15 after exploring Dev; the holdout has not been run.** The first pick and
+pass bar below were set on 2026-10-14, before any run. That pick passed on Dev, narrowly (close0:60 at 50% a
+year: +6.78% a trade, t 2.05, 822 trades, 2010-14 negative, most trades since 2022), with a fat tail (the
+worst trade -1420%). Mark asked to refine the selection on Dev first (`--explore`, below), and the rule for
+the holdout is now the one in "The frozen rule".
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -130,10 +130,41 @@ Flags are 0 or 1, so `col:1:2` keeps the yes side. The explore columns for `--on
 `comp_above200`, `breadth` and `prior_n`, on top of `ratio`, `px_prev`, `px0`, `dv_m`, `run60`, `day0`,
 `above200` and `spx_above200`.
 
-Later, and only once the rule is frozen:
+## The frozen rule (set 2026-10-15, after exploring Dev, before the holdout)
+
+**Rule (`--frozen` = `--pick close0:20 --only ratio:20:inf`):** a reverse split of 1-for-20 or more. Short at
+the day 0 close and cover at the close of day 20, no stop. Universe as before: $1 printed, top 80% by
+dollar volume, first reverse split in 60 bars. Judged at **50% a year borrow** with the same four checks as
+the first pass bar (ret above 0 with t above 2; positive in more than half the years and in 2015-19, 2020-24
+and 2025+; about 5% a trade; still positive without March 2020 to December 2021).
+
+**Second rule, set the same day:** `close20:60` in the same group (short the day 20 close, cover day 80),
+judged by ret above 0 at 50% a year with t above 2. The run prints it under the pass bar. It is the same
+stocks later in the drift, so it says whether a second entry is worth building, not a separate edge.
+
+Why this rule, from Dev (314 tries by then: 132 in the first run and 91 in each explore run):
+
+- 1-for-20+ was positive in every block in the first explore run (+19.11% a trade at day 60, 316 trades).
+  A printed price under $0.50 before the split was too, and includes almost all of these stocks.
+- Inside it, close0:20 is +15.06% a trade at 50% a year (329 trades, t 5.79, every block positive,
+  win 74%), breaks even at 243% a year borrow, and its worst trade is -257% (against -1420% for the
+  first pick). The account at 2% a short had a worst drop of 11.5%. Longer holds made a few points more
+  with a bigger tail and a lower t.
+- Every stop made it worse (a +300% stop cut it to +9.70%), so there is none.
+- Other filters looked strong inside the group (an earlier reverse split: +23.7 to +30.9% against +6.9%
+  for none; 90%+ below the 52-week high: +21.1% against about +2%; $1M+ a day: about +18% against +6.9%),
+  but they overlap, each cuts the trades (an earlier split leaves 140 of 329), and they were found on the
+  same data. They are left out of the rule and print as context in the split table.
+- Only 7 of the Dev trades are from 2010-14 and about 40 from 2015-19, so the edge is mostly 2020 on.
+
+The holdout is the other half of the stocks (split by symbol and sector) over the same years, so it should
+have about as many trades. It tests whether the Dev result was luck in which stocks landed in Dev, not
+whether 2022-26 was a special market for these shorts.
+
+Run once, with no changes after it:
 
 ```
-python reverse_split/reverse_split_events.py --start 2010-01-01 --universe holdout --unlock-holdout
+python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout
 ```
 
 ## What the data can't show
