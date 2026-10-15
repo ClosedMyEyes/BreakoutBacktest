@@ -2,9 +2,10 @@
 
 **Status: passed its one holdout run (2026-10-15), but small for the account as it stands.** The frozen rule
 (1-for-20+ splits, not an index member, short the day 0 close, cover day 20) made +11.56% a trade at 50% a
-year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed,
-so every trade is the same size. The tail sets the size: one short lost 632%. See "Holdout result" at the
-end.
+year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed.
+The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account a short and 1% on 1-for-100+
+splits, which cut the locked half's worst drop from 40% to 22% (set after the run). See "Holdout result" at
+the end.
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -260,6 +261,19 @@ half were 1-for-70 or more. On Dev, 1-for-100+ splits reached 3x the entry most 
 against 3.4% of 208 for 1-for-20 to 50) but lost no more by the cover (+18.91% a trade). So the account
 table now also shows each size with the 1-for-100+ shorts at half size (`size_100+_%`). It was picked after
 seeing DFNS (1-for-125), so the locked half is not a clean test of it.
+
+| Account at 50%/yr borrow | Growth a year | Worst drop | When |
+|---|---|---|---|
+| Dev, 2% a short | 6.95% | -10.9% | Oct 2023 to Apr 2024 |
+| Dev, 2%, 1-for-100+ at 1% (39 of 306 trades) | 6.50% | -11.9% | Oct 2023 to Jan 2024 |
+| Locked half, 2% a short | 3.61% | -39.6% | Jun to Jul 2026 (DFNS) |
+| Locked half, 2%, 1-for-100+ at 1% (41 of 263 trades) | 3.43% | -22.0% | Sep 2016 to Jan 2017 (RSLS) |
+| Locked half, 5%, 1-for-100+ at 2.5% | 8.44% | -53.4% | Sep 2016 to Jan 2017 |
+
+On the locked half it nearly halves the worst drop for 0.2% a year. On Dev it costs 0.45% a year and
+doesn't help the drop, since Dev had no DFNS. **Sizing to trade: 2% of the account a short, 1% on 1-for-100+,
+expecting a drop of about 22%.** The worst drop left is RSLS (1-for-70). Lowering the cut to 1-for-50 would
+catch it, but 1-for-50 to 100 was the best Dev bucket (+23.85%) and it would be tuning on the locked half.
 
 DFNS's 13D (a 16.7% holder, filed after the close on July 24, the Friday before the run) was not a
 purchase: the company issued those shares to pay for 60% of a drone maker, a deal announced on July 10,
