@@ -63,6 +63,7 @@ HOW TO RUN:
   python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only spx_above200:1:2   # within a filter
   python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout  # once
   python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen 20-80 --universe holdout --unlock-holdout
+  python reverse_split/reverse_split_events.py --start 2010-01-01 --combined    # both frozen rules in one account
 
 The run prints, in order: the counts and data checks, the day-by-day move around day 0,
 every entry and hold (with the fee ladder), the pick split by what was known at the
@@ -811,6 +812,51 @@ def account_sized(g, df, spx, a, b, size_pct, borrow_pct, scale):
     return curve, int((~on).sum())
 
 
+def frozen_trades(ev, df, mkt, key, fee):
+    """One frozen rule's shorts on ev (with the entry features for its entry), as rows for account_sized() with
+    a=0, b=BIG_HOLD: row = the entry bar, last = the cover bar, short at fee."""
+    entry, hold = parse_pick(FROZEN[key]["pick"])
+    name = f"{entry}:{hold}"
+    g = keep_only(ev, FROZEN[key]["only"])
+    g = pd.concat([g, pd.DataFrame(trades(g, df, mkt, entry, hold))], axis=1)
+    g = g[g[f"g_{name}"].notna()]
+    return pd.DataFrame({"rule": key, "symbol": g["symbol"].astype(str).to_numpy(), "date": g["date"].to_numpy(),
+                         "ratio": g["ratio"].to_numpy(), "row": g["row"].to_numpy() + ENTRIES[entry][0],
+                         "last": g[f"exit_{name}"].to_numpy(), f"short_0:{BIG_HOLD}": ret(g, name, fee).to_numpy()})
+
+
+def combined(ev, df, mkt, fee, sizes):
+    """--combined: the frozen rules' shorts in one account, each alone and all together, sized to trade (1-for-
+    BIG_RATIO+ at BIG_SCALE). Prints the account table and the years, and returns the table."""
+    parts = {k: frozen_trades(ev, df, mkt, k, fee) for k in FROZEN}
+    parts["both"] = pd.concat(list(parts.values()), ignore_index=True)
+    col = f"short_0:{BIG_HOLD}"
+    rows, yrs = [], {}
+    for size in sizes:
+        for k, g in parts.items():
+            scale = np.where(g["ratio"] >= BIG_RATIO, BIG_SCALE, 1.0)
+            curve, _ = account_sized(g, df, mkt["spx_close"], 0, BIG_HOLD, size, fee, scale)
+            if curve.empty:
+                continue
+            row, r_y = le.account_summary(curve, size)
+            rows.append({"rules": k, "trades": len(g), "ret": g[col].mean(), **row})
+            if size == sizes[0]:
+                yrs[f"{k} {size:g}%"] = r_y
+    keys = list(FROZEN)
+    a, b = (set(zip(parts[k]["symbol"], parts[k]["date"])) for k in keys[:2])
+    print(f"\nCOMBINED: the frozen rules' shorts in one account at {fee:g}%/yr borrow, each short X% of the account "
+          f"when it opens (size_%) and 1-for-{BIG_RATIO:g}+ at {BIG_SCALE:g}x that, marked at every close, no cap on "
+          f"shorts open. ret = the average short, % a trade. {len(a & b)} of the {len(b)} {keys[1]} shorts follow a "
+          f"{keys[0]} short on the same split (in practice, held on). Context on rules already tested, not a new "
+          f"rule.")
+    out = pd.DataFrame(rows)
+    print(out.round(2).to_string(index=False))
+    if yrs:
+        print(f"\nThe account's return each calendar year, at {sizes[0]:g}% a short:")
+        print(pd.DataFrame(yrs).round(2).to_string())
+    return out
+
+
 def num(x):
     return np.nan if x is None else x
 
@@ -886,6 +932,8 @@ def main():
                              + ". --frozen alone is 0-20")
     parser.add_argument("--explore", action="store_true",
                         help="Only the tables for refining the selection: filters, holds and stops, by 5-year block")
+    parser.add_argument("--combined", action="store_true",
+                        help="Only the account with every --frozen rule's shorts together (and each alone)")
     parser.add_argument("--sizes", type=str, default=SIZES,
                         help="Account test: each short is this %% of the account (2,5)")
     parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
@@ -894,6 +942,8 @@ def main():
     args = apply_frozen(parser.parse_args())
     if args.explore and args.universe != "dev":
         raise SystemExit("--explore is for Dev only: the holdout is run once, with --frozen.")
+    if args.combined and (args.frozen or args.explore or args.only or args.pick != PICK):
+        raise SystemExit("--combined runs the frozen rules as set; leave out --frozen, --explore, --pick and --only.")
     P = collect(args, ["universe"])
     entry, hold = parse_pick(args.pick)
     fees = [float(x) for x in args.borrow_pcts.split(",") if x.strip()]
@@ -932,7 +982,8 @@ def main():
     print(f"REVERSE-SPLIT SHORT  factor jump {args.min_ratio:g}x+  universe={args.universe}  start={args.start}  "
           f"end={args.end}  market={P['market']}  liq top {P['liq_top_pct']:g}%  "
           f"min price ${P['min_price']:g} printed  "
-          f"size={P['size']}  pick {args.pick} at {fee:g}%/yr borrow  ({time.time() - t0:.1f}s)")
+          f"size={P['size']}  {'the frozen rules together' if args.combined else 'pick ' + args.pick} at {fee:g}%/yr "
+          f"borrow  ({time.time() - t0:.1f}s)")
     print("=" * 110)
     print("Reverse splits found: " + ", ".join(f"{v:,} {k}" for k, v in counts.items())
           + f". Passed the universe: {len(ev):,}.")
@@ -942,6 +993,10 @@ def main():
     pd.set_option("display.width", 250)
     years = ce.span_years(ev["date"])
     ev = features(ev, df, spx200, market, mkt)
+    if args.combined:
+        combined(entry_features(ev, df, ENTRIES["close20"][0], market), df, mkt, fee,
+                 [float(x) for x in args.sizes.split(",") if x.strip()])
+        return
     if ENTRIES[entry][1] == "close" and ENTRIES[entry][0] > 0:
         ev = entry_features(ev, df, ENTRIES[entry][0], market)
     rule = FROZEN[args.frozen] if args.frozen else {}

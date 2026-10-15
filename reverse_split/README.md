@@ -5,8 +5,8 @@
 year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed.
 The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account a short and 1% on 1-for-100+
 splits, which cut the locked half's worst drop from 40% to 22% (set after the run). See "Holdout result" at
-the end. **The day 20 to 80 short is frozen too (2026-10-15) and waits for its one holdout run;** see its
-section at the end.
+the end. **The day 20 to 80 short passed its own holdout run too** (+15.15% a trade, t 2.29, 5 a year, about
+half its Dev result); see its section at the end.
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -316,7 +316,7 @@ What to expect, from the locked half: about 16 trades a year, about 1.3 shorts o
 after borrow, 3.4% a year for the account at this size and a worst drop of about 22%. A 13D or a big
 deal while short is worth a look by hand, but covering on one is untested.
 
-## The day 20 to 80 short (frozen 2026-10-15, before its holdout run)
+## The day 20 to 80 short (frozen 2026-10-15, then run once on the holdout)
 
 **Rule (`--frozen 20-80` = `--pick close20:60 --only ratio:20:inf --only in_index:0:1 --only
 off_peak:25:inf --only dv_m:1:inf --only px_e:1:inf --only spx_above200_e:1:2`):** the same splits as the
@@ -360,4 +360,53 @@ entries and holds stay unseen. On Dev first, then the holdout once, with no chan
 ```
 python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen 20-80
 python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen 20-80 --universe holdout --unlock-holdout
+```
+
+### Its holdout result
+
+Run once on the locked half on 2026-10-15 (`--frozen 20-80 --universe holdout --unlock-holdout`), after the
+same rule on Dev. **Passed all four checks.** No changes after it.
+
+| | Dev | Locked half |
+|---|---|---|
+| Trades (a year) | 136 (8.2) | 84 (5.0); 17 more still open when the data ends |
+| Short, % a trade at 50%/yr borrow (t) | +26.45 (7.07) | +15.15 (2.29) |
+| Hedged with the S&P | +30.03 | +18.29 |
+| Win rate | 76% | 77% |
+| Went 50%+ against the short first | 33% | 43% |
+| Break-even borrow, % a year | 166 | 115 |
+| Account at 2% a short, 1% on 1-for-100+ | 4.74%/yr, worst drop 17.2% | 2.43%/yr, worst drop 26.5% |
+
+1. ret above 0 with t above 2: +15.15%, t 2.29. Yes.
+2. Positive in 5 of 8 years, and in 2015-19 (+7.06, 2 trades), 2020-24 (+26.88, 39) and 2025+ (+4.89, 43).
+   Yes. 2026 was -18.62% on 14 trades.
+3. +15.15% a trade, 5 a year. Yes.
+4. +16.83% without March 2020 to December 2021 (t 2.46). Yes.
+
+At a 1.5% round trip it is +14.15%. Three trades stopped trading during the hold, averaging +39.2%.
+
+**The S&P check (context):** the 19 trades every other filter kept and the S&P filter dropped made +8.23% a
+trade (t 1.17), against +15.15% for the rule. The same direction as on Dev (+1.87%), with a smaller gap.
+
+**The tail.** The worst trades were AGMH (1-for-50, June 2025, -252.7%, its high 611% above the entry),
+IPST (1-for-20, April 2026, -210.3%) and NAKA (1-for-40, May 2026, -129.8%). The account's worst drop (26.5%,
+March 20 to 25, 2026) looks like FLZH (1-for-25), whose high reached 1,312% above the entry (14x) before it
+fell back and was covered at -34.9%. That is inferred from the dates; worth checking on a chart in case it
+is a bad print. Half size on 1-for-100+ didn't touch it (FLZH is 1-for-25) and cost 0.46% a year here
+(0.10% on Dev). At 2% a short with no half size the account made 2.89% a year; at 5%, 6.85% a year with a
+64% drop.
+
+**Context** (not tested, not part of the rule). Better on both halves: not after the S&P rose 5%+ in the
+20 days before day 0 (locked half: 67 trades at +21.30% against -9.05% for the 17 it drops; Dev:
++27.88% against +13.98%). An earlier reverse split did worse on the locked half (+10.46% against +18.35%)
+and the same on Dev.
+
+**Both shorts in one account.** `--combined` puts the 0-20 and 20-80 shorts in one account (sized to trade:
+2%, 1% on 1-for-100+), each alone and together, with the account's return by year. Most 20-80 shorts
+follow a 0-20 short on the same split, so in practice the short is held on from day 20 to day 80. It adds no
+new rule, so it can run on both halves:
+
+```
+python reverse_split/reverse_split_events.py --start 2010-01-01 --combined
+python reverse_split/reverse_split_events.py --start 2010-01-01 --combined --universe holdout --unlock-holdout
 ```
