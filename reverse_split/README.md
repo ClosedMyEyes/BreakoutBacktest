@@ -335,6 +335,24 @@ for the account at this size and a worst drop of about 26%. That drop was one st
 14x the entry before it fell back. At 2%, a spike like that marks the short at about a quarter of the
 account, so keep enough margin to sit through it, or the broker may buy the short in at the top.
 
+**Both shorts together** (`--combined`, run on both halves on 2026-10-15). Every 20-80 short followed a 0-20
+short on the same split (136 of 136 on Dev, 84 of 84 on the locked half). At 2% a short, 1% on 1-for-100+:
+
+| | Dev | Locked half |
+|---|---|---|
+| 0-20 alone | 6.50%/yr, worst drop 11.9% | 3.43%/yr, worst drop 22.0% |
+| 20-80 alone | 4.74%/yr, worst drop 17.2% | 2.43%/yr, worst drop 26.5% |
+| Both | 10.87%/yr, worst drop 16.2% | 4.66%/yr, worst drop 25.6% |
+| Both, each year 2022 to 2026 | +13.7, +37.0, +34.2, +56.7, +28.8 | +11.6, +23.1, +24.1, +22.0, +3.7 |
+| Shorts open at once, most / average | 22 / 3.3 | 18 / 2.5 |
+| Most of the account short at once | 44% | 55% |
+
+The drops don't stack: the 0-20 shorts were making money while FLZH spiked. The yearly rate over 2010-26
+undersells the account now. Almost every trade is from 2022 on, when reverse splits became common, so the
+years before sit near zero. If they stay as common as in 2023-25, plan on about 20% a year from both shorts
+at 2% (the locked half's years), with a drop of about 26%. 2026 to September was +3.7% (FLZH and DFNS). At
+5% a short the locked half would have been 228% short at the peak, so 2% is the size.
+
 ## The day 20 to 80 short (frozen 2026-10-15, then run once on the holdout)
 
 **Rule (`--frozen 20-80` = `--pick close20:60 --only ratio:20:inf --only in_index:0:1 --only
