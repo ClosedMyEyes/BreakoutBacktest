@@ -142,6 +142,8 @@ FILTERS = [                                     # the filter table: (label, keep
 ]
 SIZE_UP = 2.0                                   # --frozen sizing check: earlier-split trades get this many x the size
 SIZES = "2,5"                                   # account test: each short is X% of the account
+BIG_RATIO = 100.0                               # account test: 1-for-100+ shorts are also shown at
+BIG_SCALE = 0.5                                 # this share of the size (set after the holdout run)
 WORST = 10
 
 
@@ -701,6 +703,45 @@ def sizing_check(g, name, fee):
     return len(a), a.mean(), len(b), b.mean(), diff, diff / np.sqrt(a.var() / len(a) + b.var() / len(b))
 
 
+def account_sized(g, df, spx, a, b, size_pct, borrow_pct, scale):
+    """lockup_events.account() with each short opened at size_pct x its scale (one per row of g, so 0.5 is half
+    the size). All 1 gives the same curve."""
+    name = f"{a}:{b}"
+    keep = g[f"short_{name}"].notna().to_numpy()
+    g, scale = g[keep], np.asarray(scale, dtype=np.float64)[keep]
+    c = df["close"].to_numpy(np.float64)
+    dpos = spx.index.get_indexer(pd.DatetimeIndex(df["date"].to_numpy()))
+    r, last, final = g["row"].to_numpy(), g["last"].to_numpy(), g[f"short_{name}"].to_numpy()
+    i, j = r + a, np.minimum(r + b, last)
+    on = (dpos[i] >= 0) & (dpos[j] >= 0)
+    if not on.any():
+        return pd.DataFrame(columns=["date", "equity", "open", "short_%"]), int((~on).sum())
+    lo, hi = dpos[i][on].min(), dpos[j][on].max()
+    n = hi - lo + 1
+    pnl, n_open, value = np.zeros(n), np.zeros(n), np.zeros(n)
+    cost = ce.round_trip_cost()
+    for k in np.flatnonzero(on)[np.argsort(dpos[i][on], kind="stable")]:
+        rows = np.arange(i[k], j[k] + 1)
+        t = dpos[rows]
+        rows, t = rows[t >= 0], t[t >= 0] - lo
+        move = c[rows] / c[i[k]] - 1
+        path = -move * 100 - cost / 2 - borrow_pct * (rows - i[k]) / 252
+        path[-1] = final[k]
+        size = size_pct * scale[k] / 100 * (1 + pnl[t[0]])
+        span = np.full(t[-1] - t[0] + 1, np.nan)
+        span[t - t[0]], held = path, np.full(t[-1] - t[0] + 1, np.nan)
+        held[t - t[0]] = 1 + move
+        span, held = pd.Series(span).ffill().to_numpy(), pd.Series(held).ffill().to_numpy()
+        pnl[t[0]:t[-1] + 1] += size * span / 100
+        pnl[t[-1] + 1:] += size * path[-1] / 100
+        n_open[t[0]:t[-1]] += 1
+        value[t[0]:t[-1]] += size * held[:-1]
+    eq = 1 + pnl
+    curve = pd.DataFrame({"date": spx.index[lo:hi + 1], "equity": eq, "open": n_open,
+                          "short_%": value / eq * 100})
+    return curve, int((~on).sum())
+
+
 def num(x):
     return np.nan if x is None else x
 
@@ -988,6 +1029,8 @@ def main():
 
     sizes = [float(x) for x in args.sizes.split(",") if x.strip()]
     summary, yrs, skipped = [], {}, 0
+    big = (pick["ratio"] >= BIG_RATIO).to_numpy()
+    big_col = f"size_{BIG_RATIO:g}+_%"
     if kind == "close":
         pick[f"short_{off}:{off + hold}"] = pick[col]       # the name lockup_events.account() reads
         for size in sizes:
@@ -995,8 +1038,12 @@ def main():
             if curve.empty:
                 continue
             row, r_y = le.account_summary(curve, size)
-            summary.append(row)
+            summary.append({"size_%": size, big_col: size, **row})
             yrs[f"account_{size:g}%"] = r_y
+            if big.any():
+                curve, _ = account_sized(pick, df, mkt["spx_close"], off, off + hold, size, fee,
+                                         np.where(big, BIG_SCALE, 1.0))
+                summary.append({"size_%": size, big_col: size * BIG_SCALE, **le.account_summary(curve, size)[0]})
     rows = []
     for y, g in pick.groupby(pick["date"].dt.year):
         x = g[col]
@@ -1015,7 +1062,10 @@ def main():
         print(f"\nThe account at {fee:g}%/yr borrow: x_start = end balance / start; max_dd = the worst drop from a "
               f"high, marked at every close (dd_from = the high, dd_low = the bottom); max_open / avg_open = shorts "
               f"open at once; max_short_% = the open shorts' value as % of the account at most. No cap on shorts open"
-              + (f"; {skipped} trades off the S&P calendar left out." if skipped else "."))
+              + (f"; {skipped} trades off the S&P calendar left out." if skipped else ".")
+              + f" {big_col} = the size of the 1-for-{BIG_RATIO:g}+ shorts ({int(big.sum())} of {len(pick)} trades): "
+              f"each size also at {BIG_SCALE:g}x for them, added after the holdout run because the biggest spikes "
+              f"were big ratios.")
         print(pd.DataFrame(summary).round(2).to_string(index=False))
     elif kind != "close":
         print("\nThe account test needs a close entry (close0 / close5 / close20).")
