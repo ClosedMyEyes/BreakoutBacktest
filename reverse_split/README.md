@@ -1,7 +1,10 @@
 # Reverse-split short
 
-**Status: built, waiting for its first Dev run on the Norgate data.** The pick and the pass bar below were
-set on 2026-10-14, before any run.
+**Status: exploring on Dev (since 2026-10-15). The holdout stays locked.** The pick and the pass bar below
+were set on 2026-10-14, before any run. The first Dev run passed all four checks, narrowly (close0:60 at
+50% a year: +6.78% a trade, t 2.05, 822 trades, 2010-14 negative, most trades since 2022), with a fat tail
+(the worst trade -1420%). Mark asked to refine the selection on Dev before the holdout, so the run has an
+`--explore` mode (below).
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -13,7 +16,7 @@ What the project already saw: the spike short made +11.4% a trade with a reverse
 (64 trades) against +8.6% without, and the crash short +5.83% (122 trades) against +0.88% for all trades.
 Both splits were found after the fact on small samples, so they are a reason to test, not a result.
 
-`reverse_split_events.py` is an event table (no stops or sizing):
+`reverse_split_events.py` is an event table (no sizing, and no stop on the pick; `--explore` tries stops):
 
 - **Finding the splits:** the data has no corporate-actions table. Norgate's factor (printed close over
   adjusted close) changes only on an adjustment day, and jumps up by the ratio on a reverse split (10x for a
@@ -90,6 +93,42 @@ python reverse_split/reverse_split_events.py --start 2010-01-01 --min-price 5
 python reverse_split/reverse_split_events.py --start 2010-01-01 --only ratio:5:20   # one bucket, by block
 python -m pytest reverse_split
 ```
+
+## Exploring on Dev (`--explore`)
+
+`--explore` prints only the tables for refining the selection, all on Dev, each row split by 5-year block
+(2010-14, 2015-19, 2020-24, 2025+) with `blocks_up`, the number of blocks where it made money. Most trades
+are from 2022 on, so a filter that only works there is likely one market, not an edge. Every bucket is
+known at the day 0 close:
+
+- **Downtrend:** the move over the 60, 120 and 250 bars before day 0, how far below its 52-week closing
+  high, and the stock against its 200-day and 50-day.
+- **Market:** the S&P against its 200-day and 50-day, an S&P uptrend (above both and the 50-day rising),
+  the S&P's 20-day move, the Nasdaq against its 200-day, and the share of stocks above their 200-day.
+- **Volume** (split-consistent shares, turnover / adjusted close): the last 10 days against the usual
+  (days -60 to -11), the last 50 days against the 200 before them, and day 0 against the usual.
+- **The split and size:** the ratio, how many reverse splits in the past 3 years (0, 1, 2+), the printed
+  price on day -1, the day 0 move, dollar volume and index.
+- **Every entry and hold** by block, at the pick's fee.
+- **Stops on the pick:** cover when a day's high reaches +300, +200, +100 or +50% above the entry, at the
+  stop or at the open when it gapped above it, with the share stopped, the worst trade, the 1-in-20 worst
+  and the account test at 2% a short.
+
+`--only` narrows the events first, so the tables show one filter inside another. Each table row is one
+more try on the same data and the run prints how many it holds. A filter is worth keeping only if it holds
+in every block and has a reason behind it; the rule then gets frozen here before the holdout.
+
+```
+python reverse_split/reverse_split_events.py --start 2010-01-01 --explore
+python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --pick close0:20
+python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only spx_above200:1:2
+python reverse_split/reverse_split_events.py --start 2010-01-01 --explore --only prior_n:1:99 --only ratio:20:inf
+```
+
+Flags are 0 or 1, so `col:1:2` keeps the yes side. The explore columns for `--only` are `move120`,
+`move250`, `from_high`, `above50`, `vol10_x`, `vol50_x`, `vol0_x`, `spx_above50`, `spx_trend`, `spx_move20`,
+`comp_above200`, `breadth` and `prior_n`, on top of `ratio`, `px_prev`, `px0`, `dv_m`, `run60`, `day0`,
+`above200` and `spx_above200`.
 
 Later, and only once the rule is frozen:
 

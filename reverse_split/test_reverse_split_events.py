@@ -18,7 +18,7 @@ def toy(symbol, n=300, price=4.0):
                          "high": c.copy(), "low": c.copy(), "close": c.copy(), "unadj_close": c.copy(),
                          "volume": 1e6, "turnover": 4e6, "listed": 1, "dv_pct": 90.0, "tight_10": 0.1,
                          "bars_since_break": np.nan, "bad_bar": 0, "bad_bar_dn": 0, "dv50": 4e6, "sma200": price,
-                         "in_sp500": 0, "in_sp400": 0, "in_sp600": 0, "in_r2000": 0})
+                         "sma50": price, "hi52_c": price, "in_sp500": 0, "in_sp400": 0, "in_sp600": 0, "in_r2000": 0})
 
 
 def reverse_split(df, row, ratio):
@@ -42,6 +42,13 @@ def start_of(df, sym):
 def market(df):
     d = pd.DatetimeIndex(np.sort(df["date"].unique()))
     return pd.DataFrame({k: 100.0 for k in ["spx_open", "spx_close", "comp_open", "comp_close"]}, index=d)
+
+
+def market_features(df, above200=1.0):
+    """The market features by date, as datastore.load_market() gives them."""
+    d = pd.DatetimeIndex(np.sort(df["date"].unique()))
+    return pd.DataFrame({"spx_above200": above200, "spx_above50": 1.0, "spx_sma50_rising": 1.0,
+                         "comp_above200": 0.0, "pct_above200": 55.0}, index=d)
 
 
 P = dict(rs.rules.UNIVERSE_DEFAULTS, min_price=1.0, liq_top_pct=80.0)
@@ -182,3 +189,97 @@ def test_parse_pick():
             assert False, bad
         except ValueError:
             pass
+
+
+def test_prior_n_counts_the_reverse_splits_in_the_3_years_before():
+    df, codes = panel(toy("MANY", n=1000))
+    for row in [80, 200, 320, 900]:                                  # 900 - 756 = 144: 80 is too old
+        reverse_split(df, row, 5)
+    ev, _ = rs.find_splits(df, codes)
+    assert list(ev["row"]) == [80, 200, 320, 900]
+    assert list(ev["prior_n"]) == [0, 1, 2, 2]
+    assert list(ev["prior_split"]) == [False, True, True, True]
+
+
+def test_window_mean_stays_inside_the_stock():
+    x = np.array([1.0, 2.0, 3.0, np.nan, 5.0, 6.0])
+    got = rs.window_mean(x, np.array([5, 5, 3]), -3, -1, np.array([0, 3, 0]))
+    assert np.isclose(got[0], 4.0)                                   # rows 2-4, the NaN skipped
+    assert np.isnan(got[1])                                          # row 2 is before the stock's first row
+    assert np.isclose(got[2], 2.0)                                   # rows 0-2
+
+
+def test_the_explore_features_downtrend_volume_and_market():
+    df, codes = panel(toy("DOWN", n=400))
+    r = 300
+    px = ["open", "high", "low", "close", "unadj_close"]
+    df.loc[:r - 251, px] = 16.0                                       # 16 until 250 bars before day 0
+    df.loc[r - 250:r - 121, px] = 8.0                                 # then 8, then 6 until 60 bars before
+    df.loc[r - 120:r - 61, px] = 6.0
+    df["hi52_c"] = 6.0
+    reverse_split(df, r, 10)
+    df["turnover"] = df["close"] * 1e6                               # 1M shares a day
+    df.loc[r - 10:r - 1, "turnover"] = 4.0 * 0.5e6                   # half the usual shares in the last 10 days
+    df.loc[r, "turnover"] = 4.0 * 3e6                                # 3x on day 0
+    df.loc[r, "sma50"] = 5.0                                         # below its 50-day
+    ev = events(df, codes)
+    ev = rs.features(ev, df, pd.Series(1.0, index=pd.DatetimeIndex(df["date"].unique())), market_features(df),
+                     market(df))
+    e = ev.iloc[0]
+    assert np.isclose(e["run60"], 0.0) and np.isclose(e["move120"], -100 / 3) and np.isclose(e["move250"], -50.0)
+    assert np.isclose(e["from_high"], 100 / 3) and e["above50"] == 0.0
+    assert np.isclose(e["vol10_x"], 0.5) and np.isclose(e["vol0_x"], 3.0)
+    assert e["spx_trend"] == 1.0 and e["comp_above200"] == 0.0 and e["breadth"] == 55.0 and e["spx_move20"] == 0.0
+
+
+def test_a_stop_covers_at_the_stop_or_the_open_above_it():
+    df, codes = panel(toy("TOUCH"), toy("GAP"), toy("NONE"), toy("LATE"))
+    for s in ["TOUCH", "GAP", "NONE"]:
+        reverse_split(df, start_of(df, s) + 80, 10)
+    reverse_split(df, start_of(df, "LATE") + 280, 10)                # 60 bars runs past the data end
+    t, gp, lt = (start_of(df, s) for s in ["TOUCH", "GAP", "LATE"])
+    df.loc[t + 83, "high"] = 6.2                                     # touches +50% (6.0) on day 3
+    df.loc[gp + 83, ["open", "high", "close"]] = [7.0, 7.5, 7.0]     # opens above it
+    df.loc[lt + 285, "high"] = 6.5
+    ev = events(df, codes)
+    out = rs.trades(ev, df, market(df), "close0", 60, 50)
+    got = {s: k for k, s in enumerate(ev["symbol"])}
+    g, stop, ex = out["g_close0:60/s50"], out["stop_close0:60/s50"], out["exit_close0:60/s50"]
+    cost = rs.ce.round_trip_cost()
+    assert np.isclose(g[got["TOUCH"]], -50.0 - cost) and ex[got["TOUCH"]] == t + 83
+    assert np.isclose(g[got["GAP"]], -75.0 - cost) and ex[got["GAP"]] == gp + 83
+    assert np.isclose(g[got["NONE"]], -cost) and stop[got["NONE"]] == 0.0
+    assert stop[got["TOUCH"]] == 1.0 and np.isclose(out["y_close0:60/s50"][got["TOUCH"]], 3 / 252)
+    assert np.isclose(g[got["LATE"]], -50.0 - cost) and ex[got["LATE"]] == lt + 285   # stopped before the end
+    op = rs.trades(ev, df, market(df), "open1", 60, 50)
+    assert np.isclose(op["g_open1:60/s50"][got["TOUCH"]], -50.0 - cost)
+    df.loc[t + 81, "high"] = 6.1                                     # the open1 entry bar itself
+    op = rs.trades(ev, df, market(df), "open1", 60, 50)
+    assert np.isclose(op["g_open1:60/s50"][got["TOUCH"]], -50.0 - cost)
+    assert op["exit_open1:60/s50"][got["TOUCH"]] == t + 81
+
+
+def test_explore_prints_every_family_and_counts_its_tries(capsys):
+    frames = [toy(f"S{k}", n=400) for k in range(6)]
+    df, codes = panel(*frames)
+    for k in range(6):
+        s0 = start_of(df, f"S{k}")
+        reverse_split(df, s0 + 80 + 10 * k, [5, 10, 30][k % 3])
+        df.loc[s0 + 81 + 10 * k:s0 + 399, ["open", "high", "low", "close"]] = 4.0 * (0.7 if k % 2 else 1.2)
+    ev = events(df, codes)
+    mkt = market(df)
+    ev = rs.features(ev, df, pd.Series(1.0, index=pd.DatetimeIndex(df["date"].unique())), market_features(df), mkt)
+    grid = [(e, hh) for e in rs.ENTRIES for hh in rs.HOLDS]
+    cols = {}
+    for e, hh in grid:
+        cols.update(rs.trades(ev, df, mkt, e, hh))
+    ev = pd.concat([ev, pd.DataFrame(cols)], axis=1)
+    pick = ev[ev["g_close0:60"].notna()].reset_index(drop=True)
+    args = argparse.Namespace(pick="close0:60", min_ratio=rs.MIN_RATIO)
+    tried = rs.explore(pick, ev, df, mkt, "close0:60", 50.0, grid, args)
+    n_buckets = sum(len(b) for _, filters in rs.explore_groups(pick, rs.MIN_RATIO) for _, b in filters)
+    assert tried == n_buckets + len(grid) + len(rs.STOPS)
+    text = capsys.readouterr().out
+    for head in ["DOWNTREND", "MARKET", "VOLUME", "THE SPLIT", "SIZE", "EVERY ENTRY AND HOLD", "STOPS"]:
+        assert head in text
+    assert "2010-14" in text and "acct2_maxdd" in text
