@@ -1,10 +1,10 @@
 # Reverse-split short
 
-**Status: rule frozen on 2026-10-15 after exploring Dev; the holdout has not been run.** The first pick and
-pass bar below were set on 2026-10-14, before any run. That pick passed on Dev, narrowly (close0:60 at 50% a
-year: +6.78% a trade, t 2.05, 822 trades, 2010-14 negative, most trades since 2022), with a fat tail (the
-worst trade -1420%). Mark asked to refine the selection on Dev first (`--explore`, below), and the rule for
-the holdout is now the one in "The frozen rule".
+**Status: passed its one holdout run (2026-10-15), but small for the account as it stands.** The frozen rule
+(1-for-20+ splits, not an index member, short the day 0 close, cover day 20) made +11.56% a trade at 50% a
+year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed,
+so every trade is the same size. The tail sets the size: one short lost 632%. See "Holdout result" at the
+end.
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -202,3 +202,52 @@ Real-world risks the backtest can't model:
 - **Squeezes.** Low-float stocks after a reverse split are prone to sharp squeezes. Shorts here can lose
   more than 100% of the position, and a recalled borrow during a squeeze forces a cover at the worst time.
   Size for the tail, not the average.
+
+## Holdout result
+
+Run once on the locked half on 2026-10-15 (`--frozen --universe holdout --unlock-holdout`). **Passed all four
+checks.** No changes after it.
+
+| | Dev | Locked half |
+|---|---|---|
+| Trades (a year) | 306 (18.4) | 263 (15.8) |
+| Short, % a trade at 50%/yr borrow (t) | +18.55 (7.80) | +11.56 (3.51) |
+| Hedged with the S&P | +19.69 | +12.99 |
+| Win rate | 76% | 70% |
+| Break-even borrow, % a year | 286 | 197 |
+| Without March 2020 to December 2021 | | +12.26 (t 3.66) |
+
+1. ret above 0 with t above 2: +11.56%, t 3.51. Yes.
+2. Positive in 10 of 13 years, and in 2015-19 (+7.68, 18 trades), 2020-24 (+14.83, 131) and 2025+ (+8.77,
+   110). Yes. 2010-14 had 4 trades.
+3. +11.56% a trade, 16 a year. Yes.
+4. +12.26% without March 2020 to December 2021. Yes.
+
+At a 1.5% round trip it is +10.56%. Six trades (2.3%) stopped trading during the hold, averaging +39.1%.
+
+**Sizing check: failed.** Trades with an earlier reverse split made +10.71% (89 trades) against +11.99% for
+the rest (174), difference -1.28, t -0.14. Every trade is the same size.
+
+**The filter table on the locked half** (context, set before the run, not tested):
+
+| Keep only | Trades | Avg | Dropped avg |
+|---|---|---|---|
+| All trades | 263 | +11.56 | |
+| Down 90%+ over 250 days | 145 | +17.14 | +4.70 |
+| 90%+ below the 52-week high | 162 | +15.40 | +5.38 |
+| $1M+ a day traded | 172 | +14.71 | +5.59 |
+| Down 75%+ over 120 days | 132 | +13.26 | +9.83 |
+| Volume last 50 days 1.5x+ the 200 before | 187 | +12.05 | +10.35 |
+| S&P above its 200-day | 216 | +11.38 | +12.35 |
+| An earlier reverse split in 3 years | 89 | +10.71 | +11.99 |
+| Not after the S&P rose 5%+ in 20 days | 222 | +9.75 | +21.32 |
+| Day 0 volume 2x+ usual | 158 | +9.30 | +14.95 |
+
+The fast-collapse filters and $1M+ a day did better on both halves. The earlier split, the S&P filters and
+the volume filters did not hold up. Any of them would have to prove itself on trades from here on.
+
+**The tail sets the size.** The worst trade, DFNS (day 0 2026-07-20), ran to 20x the entry at its peak and
+lost 632% at the cover; the next were EDVA -281% and RSLS -185% (peak 11x). The account at 2% a short grew
+3.6% a year with a worst drop of 39.6% (June to July 2026). At 5% it grew 8.6% a year but dropped 98.5%. On
+average 1.25 shorts were open (at most 11), so little of the account is used. At 1% a short, a DFNS costs
+about 6% of the account at the cover and about 20% at its peak, and the account grows about 2% a year.
