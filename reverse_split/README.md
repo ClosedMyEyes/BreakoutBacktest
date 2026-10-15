@@ -1,6 +1,6 @@
 # Reverse-split short
 
-**Status: passed its one holdout run (2026-10-15), but small for the account as it stands.** The frozen rule
+**Status: locked on 2026-10-15 and worth trading. See "How to trade it" at the end.** The frozen rule
 (1-for-20+ splits, not an index member, short the day 0 close, cover day 20) made +11.56% a trade at 50% a
 year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed.
 The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account a short and 1% on 1-for-100+
@@ -279,3 +279,29 @@ DFNS's 13D (a 16.7% holder, filed after the close on July 24, the Friday before 
 purchase: the company issued those shares to pay for 60% of a drone maker, a deal announced on July 10,
 before the split. Covering on a 13D would have saved this trade, but filings aren't in the data, so it
 is untested.
+
+## How to trade it (locked 2026-10-15)
+
+**Finding the splits ahead of time.** A reverse split is public before day 0. First comes a shareholder
+vote on a range of ratios (a proxy, weeks or months ahead). Then the board sets the ratio and the date in a
+press release and an 8-K, usually 2 to 10 days ahead. Nasdaq has required this at least 2 business days
+before the split takes effect since late 2023. Places to watch: split calendars (Benzinga, TipRanks),
+Nasdaq's Daily List, the broker's corporate actions page, or an SEC full-text search for 8-Ks that mention
+"reverse stock split".
+
+**On day 0 (the first day at the new price), before the close:**
+
+1. The final ratio is 1-for-20 or more. Check it on the day: boards change it late (DFNS went from 1-for-50
+   to 1-for-125 the week before).
+2. Not in the S&P 500, 400 or 600 or the Russell 2000.
+3. Printed price $1 or more, and not in the bottom 20% of stocks by 50-day dollar volume.
+4. It is the stock's first reverse split in 60 trading days.
+5. Shares can be borrowed. Check that morning, since many of these can't be. The test charged 50% a year;
+   it breaks even at about 200%.
+6. Short at the close: 2% of the account, 1% for 1-for-100+. If the stock fell 10%+ that day, the short-sale
+   rule is on and a market-on-close short may not fill.
+7. Cover at the close 20 trading days later. No stop: every stop tested made it worse.
+
+What to expect, from the locked half: about 16 trades a year, about 1.3 shorts open at once, +11.6% a trade
+after borrow, 3.4% a year for the account at this size and a worst drop of about 22%. A 13D or a big
+deal while short is worth a look by hand, but covering on one is untested.
