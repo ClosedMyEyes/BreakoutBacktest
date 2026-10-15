@@ -126,7 +126,19 @@ NEED_BLOCKS = ["2015-2019", "2020-2024", "2025-2029"]
 FROZEN_SET = "2026-10-15"                       # --frozen: the rule set for the one holdout run, after --explore
 FROZEN_PICK = "close0:20"
 FROZEN_ONLY = ["ratio:20:inf"]                  # 1-for-20 and up
-SECOND = "close20:60"                           # set the same day: short the day 20 close, cover day 80
+FILTERS = [                                     # the filter table: (label, keep), each known at the day 0 close
+    ("not an index member", lambda g: g["index"] == "neither"),
+    ("not after the S&P rose 5%+ in 20 days", lambda g: g["spx_move20"] < 5),
+    ("S&P above its 200-day", lambda g: g["spx_above200"] == 1),
+    ("$1M+ a day traded", lambda g: g["dv_m"] >= 1),
+    ("volume last 50 days 1.5x+ the 200 before", lambda g: g["vol50_x"] >= 1.5),
+    ("90%+ below the 52-week high", lambda g: g["from_high"] >= 90),
+    ("day 0 volume 2x+ usual", lambda g: g["vol0_x"] >= 2),
+    ("down 90%+ over 250 days", lambda g: g["move250"] < -90),
+    ("down 75%+ over 120 days", lambda g: g["move120"] < -75),
+    ("an earlier reverse split in 3 years", lambda g: g["prior_n"] >= 1),
+]
+SIZE_UP = 2.0                                   # --frozen sizing check: earlier-split trades get this many x the size
 SIZES = "2,5"                                   # account test: each short is X% of the account
 WORST = 10
 
@@ -652,6 +664,36 @@ def apply_frozen(args):
     return args
 
 
+def filter_table(g, name, fee):
+    """Each FILTERS row on the trades in g: what keeping only the trades that pass it does to the count, the
+    average and the total (trades x average, % of one position: the profit if every trade is the same size)."""
+    r = ret(g, name, fee)
+    ok = r.notna().to_numpy()
+    total = r[ok].sum()
+    rows = [{"filter": "all trades", "trades": int(ok.sum()), "kept_%": 100.0, "ret": r[ok].mean(),
+             "t": num(ce.tstat_by_month(r[ok], g["date"][ok])), "blocks_up": block_row(g[ok], name, fee)["blocks_up"],
+             "ret_dropped": np.nan, "total": total, "total_vs_all_%": 100.0}]
+    for label, keep in FILTERS:
+        k = keep(g).fillna(False).to_numpy(dtype=bool) & ok
+        d = ~k & ok
+        rows.append({"filter": label, "trades": int(k.sum()), "kept_%": k.sum() / max(ok.sum(), 1) * 100,
+                     "ret": r[k].mean(), "t": num(ce.tstat_by_month(r[k], g["date"][k])) if k.any() else np.nan,
+                     "blocks_up": block_row(g[k], name, fee)["blocks_up"], "ret_dropped": r[d].mean(),
+                     "total": r[k].sum(), "total_vs_all_%": r[k].sum() / total * 100 if total else np.nan})
+    return pd.DataFrame(rows)
+
+
+def sizing_check(g, name, fee):
+    """Trades with an earlier reverse split in 3 years against the rest: (n, ret) each, the difference and its
+    Welch t (trades as independent)."""
+    r = ret(g, name, fee)
+    a, b = r[(g["prior_n"] >= 1) & r.notna()], r[(g["prior_n"] == 0) & r.notna()]
+    if len(a) < 2 or len(b) < 2:
+        return len(a), a.mean(), len(b), b.mean(), np.nan, np.nan
+    diff = a.mean() - b.mean()
+    return len(a), a.mean(), len(b), b.mean(), diff, diff / np.sqrt(a.var() / len(a) + b.var() / len(b))
+
+
 def num(x):
     return np.nan if x is None else x
 
@@ -728,6 +770,8 @@ def main():
     parser.add_argument("--save-events", type=str, default=None, help="Write every event to this CSV")
     parser.add_argument("--no-log", action="store_true", help="Don't add a row to the research log")
     args = apply_frozen(parser.parse_args())
+    if args.explore and args.universe != "dev":
+        raise SystemExit("--explore is for Dev only: the holdout is run once, with --frozen.")
     P = collect(args, ["universe"])
     entry, hold = parse_pick(args.pick)
     fees = [float(x) for x in args.borrow_pcts.split(",") if x.strip()]
@@ -792,6 +836,8 @@ def main():
     grid = [(e, hh) for e in ENTRIES for hh in HOLDS]
     if (entry, hold) not in grid:
         grid.append((entry, hold))
+    if args.frozen:
+        grid = [(entry, hold)]          # only the frozen rule: other entries and holds stay unseen on the holdout
     name = f"{entry}:{hold}"
     if args.explore:
         cols_out = {}
@@ -825,14 +871,18 @@ def main():
     for line in data_checks(ev, df):
         print(line)
 
-    print(f"\nDay by day around day 0 against the S&P, in the short's favour (vs_spx = average move that day, + = the "
-          f"stock fell more than the S&P; running = from day 1 on, their total from the day 0 close, the drift a short "
-          f"at the close would catch; up to day 0, the total from that day to the day 0 close; short_way_% = share "
-          f"moving the short's way; med_vol_x = median volume vs usual (days {VOL_BASE[0]} to {VOL_BASE[1]}); "
-          f"under1_% = share printing under $1; delisted_% = share that had stopped trading). Price-break days are "
-          f"left out of vs_spx, which leaves out most big split-day moves.")
-    prof = profile(ev, df, mkt)
-    print(prof[prof["day"].isin(PROFILE_SHOW)].round(2).to_string(index=False))
+    if args.frozen:
+        print("\n(--frozen: no day-by-day table and no other entries or holds, so the days after the cover stay "
+              "unseen on the holdout.)")
+    else:
+        print(f"\nDay by day around day 0 against the S&P, in the short's favour (vs_spx = average move that day, + = "
+              f"the stock fell more than the S&P; running = from day 1 on, their total from the day 0 close, the drift "
+              f"a short at the close would catch; up to day 0, the total from that day to the day 0 close; short_way_% "
+              f"= share moving the short's way; med_vol_x = median volume vs usual (days {VOL_BASE[0]} to "
+              f"{VOL_BASE[1]}); under1_% = share printing under $1; delisted_% = share that had stopped trading). "
+              f"Price-break days are left out of vs_spx, which leaves out most big split-day moves.")
+        prof = profile(ev, df, mkt)
+        print(prof[prof["day"].isin(PROFILE_SHOW)].round(2).to_string(index=False))
 
     cols_out = {}
     for e, hh in grid:
@@ -878,6 +928,11 @@ def main():
           f"These are {n_buckets} buckets, so a few will reach t 2 by chance: one is worth a follow-up only if it "
           f"turns the sign and holds in every 5-year block.")
     print(split_table(pick, name, fee, low, years, groups).round(2).to_string(index=False))
+    if args.frozen:
+        print(f"\nFILTERS, context set on {FROZEN_SET} and not part of the rule: keeping only the trades that pass "
+              f"each one, at {fee:g}%/yr. kept_% = share of the trades kept; ret_dropped = the average of the ones it "
+              f"drops; total = trades x ret (% of one position), the profit if every trade is the same size.")
+        print(filter_table(pick, name, fee).round(2).to_string(index=False))
 
     st = stats(pick, name, fee, years)
     stress = st.get("ret", np.nan) - (STRESS_COST - cost)
@@ -1000,14 +1055,20 @@ def main():
     verdict = "PASSES on this data" if all(ok for _, _, ok in checks) else "does not pass"
     print(f"  -> {verdict}. " + ("A Dev pass is not a result: freeze the rule in the README, then run the holdout once."
                                  if args.universe == "dev" else "This is the one holdout run: no changes after it."))
-    if args.frozen and f"g_{SECOND}" in ev:
-        s2 = stats(ev, SECOND, fee, years)
-        ok2 = s2.get("ret", -1) > 0 and (s2.get("t") or 0) > 2
-        print(f"  Second rule, set the same day: {SECOND} (short the day 20 close, cover day 80) in the same group, "
-              f"ret above 0 at {fee:g}%/yr with t above 2: {s2.get('ret', np.nan):+.2f}%, t {num(s2.get('t')):.2f}, "
-              f"{s2['trades']} trades  {'yes' if ok2 else 'NO'}")
-    print(f"Tries in this run: {len(grid)} entry x hold rows at {len(fees)} fees and {n_buckets} split buckets = "
-          f"{tries}. The pick is one of them; read the rest as context.")
+    if args.frozen:
+        na, ra, nb, rb, diff, tw = sizing_check(pick, name, fee)
+        ok_size = diff > 0 and tw > 2
+        print(f"  Sizing check, set the same day: trades with an earlier reverse split in 3 years beat the rest by "
+              f"more than 0 with a Welch t above 2 ({na} trades {ra:+.2f}% against {nb} trades {rb:+.2f}%, difference "
+              f"{diff:+.2f}, t {tw:.2f})  {'yes' if ok_size else 'NO'} -> "
+              + (f"earlier-split trades get {SIZE_UP:g}x the size." if ok_size else "every trade the same size."))
+    if args.frozen:
+        tries = 1
+        print(f"This run is the frozen rule's test: the pass bar and the sizing check. The {n_buckets} split buckets "
+              f"and {len(FILTERS)} filters are context.")
+    else:
+        print(f"Tries in this run: {len(grid)} entry x hold rows at {len(fees)} fees and {n_buckets} split buckets = "
+              f"{tries}. The pick is one of them; read the rest as context.")
 
     if not args.no_log:
         res = {k: (round(float(v), 3) if v is not None and np.isfinite(v) else None) for k, v in st.items()}

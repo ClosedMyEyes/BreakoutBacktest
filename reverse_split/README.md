@@ -138,9 +138,14 @@ dollar volume, first reverse split in 60 bars. Judged at **50% a year borrow** w
 the first pass bar (ret above 0 with t above 2; positive in more than half the years and in 2015-19, 2020-24
 and 2025+; about 5% a trade; still positive without March 2020 to December 2021).
 
-**Second rule, set the same day:** `close20:60` in the same group (short the day 20 close, cover day 80),
-judged by ret above 0 at 50% a year with t above 2. The run prints it under the pass bar. It is the same
-stocks later in the drift, so it says whether a second entry is worth building, not a separate edge.
+**Sizing check, set the same day:** trades with an earlier reverse split in the past 3 years (140 of 329 on
+Dev: +26.0% a trade against +6.9% for the rest) should beat the rest on the holdout by more than 0 with a
+Welch t above 2. If they do, those trades get 2x the size; if not, every trade is the same size. The run
+prints it under the pass bar.
+
+`--frozen` prints only this rule: no other entries or holds and no day-by-day table, so the holdout's days
+after the cover stay unseen. The day 20 to 80 short in the same group (+14.6% on Dev) is its own setup,
+to be explored on Dev later. The filter table (below) prints as context.
 
 Why this rule, from Dev (314 tries by then: 132 in the first run and 91 in each explore run):
 
@@ -154,14 +159,18 @@ Why this rule, from Dev (314 tries by then: 132 in the first run and 91 in each 
 - Other filters looked strong inside the group (an earlier reverse split: +23.7 to +30.9% against +6.9%
   for none; 90%+ below the 52-week high: +21.1% against about +2%; $1M+ a day: about +18% against +6.9%),
   but they overlap, each cuts the trades (an earlier split leaves 140 of 329), and they were found on the
-  same data. They are left out of the rule and print as context in the split table.
+  same data. They are left out of the rule and print as context in the filter table, which shows for
+  each one how many trades it keeps, their average, the average of the ones it drops, and the total
+  (trades x average). On Dev only two raised the total: not an index member and not after the S&P rose
+  5%+ in 20 days, both by dropping a few big losers.
 - Only 7 of the Dev trades are from 2010-14 and about 40 from 2015-19, so the edge is mostly 2020 on.
 
 The holdout is the other half of the stocks (split by symbol and sector) over the same years, so it should
 have about as many trades. It tests whether the Dev result was luck in which stocks landed in Dev, not
 whether 2022-26 was a special market for these shorts.
 
-Run once, with no changes after it:
+`python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen` prints the same thing on Dev,
+including the exact Dev filter table. The holdout run, once, with no changes after it:
 
 ```
 python reverse_split/reverse_split_events.py --start 2010-01-01 --frozen --universe holdout --unlock-holdout
