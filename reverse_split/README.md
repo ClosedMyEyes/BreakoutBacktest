@@ -1,10 +1,11 @@
 # Reverse-split short
 
-**Status: passed its one holdout run (2026-10-15), but small for the account as it stands.** The frozen rule
+**Status: locked on 2026-10-15 and worth trading. See "How to trade it" at the end.** The frozen rule
 (1-for-20+ splits, not an index member, short the day 0 close, cover day 20) made +11.56% a trade at 50% a
-year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed,
-so every trade is the same size. The tail sets the size: one short lost 632%. See "Holdout result" at the
-end.
+year borrow on the locked half, t 3.51, and passed all four checks. The earlier-split sizing check failed.
+The tail sets the size: one short lost 632%. Sizing to trade: 2% of the account a short and 1% on 1-for-100+
+splits, which cut the locked half's worst drop from 40% to 22% (set after the run). See "Holdout result" at
+the end.
 
 Idea #2 from the project's `ideas/next_setups.md`. Most reverse splits are forced. A Nasdaq stock that
 closes under $1 for 30 business days gets a deficiency notice and about 180 days to fix it, and a reverse
@@ -261,7 +262,46 @@ against 3.4% of 208 for 1-for-20 to 50) but lost no more by the cover (+18.91% a
 table now also shows each size with the 1-for-100+ shorts at half size (`size_100+_%`). It was picked after
 seeing DFNS (1-for-125), so the locked half is not a clean test of it.
 
+| Account at 50%/yr borrow | Growth a year | Worst drop | When |
+|---|---|---|---|
+| Dev, 2% a short | 6.95% | -10.9% | Oct 2023 to Apr 2024 |
+| Dev, 2%, 1-for-100+ at 1% (39 of 306 trades) | 6.50% | -11.9% | Oct 2023 to Jan 2024 |
+| Locked half, 2% a short | 3.61% | -39.6% | Jun to Jul 2026 (DFNS) |
+| Locked half, 2%, 1-for-100+ at 1% (41 of 263 trades) | 3.43% | -22.0% | Sep 2016 to Jan 2017 (RSLS) |
+| Locked half, 5%, 1-for-100+ at 2.5% | 8.44% | -53.4% | Sep 2016 to Jan 2017 |
+
+On the locked half it nearly halves the worst drop for 0.2% a year. On Dev it costs 0.45% a year and
+doesn't help the drop, since Dev had no DFNS. **Sizing to trade: 2% of the account a short, 1% on 1-for-100+,
+expecting a drop of about 22%.** The worst drop left is RSLS (1-for-70). Lowering the cut to 1-for-50 would
+catch it, but 1-for-50 to 100 was the best Dev bucket (+23.85%) and it would be tuning on the locked half.
+
 DFNS's 13D (a 16.7% holder, filed after the close on July 24, the Friday before the run) was not a
 purchase: the company issued those shares to pay for 60% of a drone maker, a deal announced on July 10,
 before the split. Covering on a 13D would have saved this trade, but filings aren't in the data, so it
 is untested.
+
+## How to trade it (locked 2026-10-15)
+
+**Finding the splits ahead of time.** A reverse split is public before day 0. First comes a shareholder
+vote on a range of ratios (a proxy, weeks or months ahead). Then the board sets the ratio and the date in a
+press release and an 8-K, usually 2 to 10 days ahead. Nasdaq has required this at least 2 business days
+before the split takes effect since late 2023. Places to watch: split calendars (Benzinga, TipRanks),
+Nasdaq's Daily List, the broker's corporate actions page, or an SEC full-text search for 8-Ks that mention
+"reverse stock split".
+
+**On day 0 (the first day at the new price), before the close:**
+
+1. The final ratio is 1-for-20 or more. Check it on the day: boards change it late (DFNS went from 1-for-50
+   to 1-for-125 the week before).
+2. Not in the S&P 500, 400 or 600 or the Russell 2000.
+3. Printed price $1 or more, and not in the bottom 20% of stocks by 50-day dollar volume.
+4. It is the stock's first reverse split in 60 trading days.
+5. Shares can be borrowed. Check that morning, since many of these can't be. The test charged 50% a year;
+   it breaks even at about 200%.
+6. Short at the close: 2% of the account, 1% for 1-for-100+. If the stock fell 10%+ that day, the short-sale
+   rule is on and a market-on-close short may not fill.
+7. Cover at the close 20 trading days later. No stop: every stop tested made it worse.
+
+What to expect, from the locked half: about 16 trades a year, about 1.3 shorts open at once, +11.6% a trade
+after borrow, 3.4% a year for the account at this size and a worst drop of about 22%. A 13D or a big
+deal while short is worth a look by hand, but covering on one is untested.
