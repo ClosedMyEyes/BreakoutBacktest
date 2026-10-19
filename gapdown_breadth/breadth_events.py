@@ -235,8 +235,8 @@ def year(dates):
     return np.asarray(pd.DatetimeIndex(dates).year)
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def add_event_flags(parser):
+    """The flags that set the events, the breadth and the costs (shared with filters.py)."""
     add_param_flags(parser, ["universe"])
     parser.set_defaults(size="sp500")
     parser.add_argument("--start", type=str, default=None, help="First day")
@@ -251,15 +251,13 @@ def main():
                         help="S&P 500 members needed to read a day's breadth (100)")
     parser.add_argument("--cost-pct", type=float, default=COST_PCT, help="Round trip for a stock, %% (0.10)")
     parser.add_argument("--spy-cost-pct", type=float, default=SPY_COST_PCT, help="Round trip for SPY, %% (0.02)")
-    parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
-    parser.add_argument("--save-trades", type=str, default=None, help="Write every event trade to this CSV")
-    parser.add_argument("--no-log", action="store_true", help="Don't add a row to the research log")
-    args = parser.parse_args()
-    P = collect(args, ["universe"])
 
-    t0 = time.time()
+
+def load_events(args, P, extra=()):
+    """Load the panel (plus the columns in extra) and work out the gaps, each day's breadth, SPY's day and the
+    event trades with their S&P index. Returns df, codes, market, gap, brk, br, spy, t."""
     cols = list(dict.fromkeys(rules.universe_columns(P) + ["open", "close", "bad_bar", "bad_bar_dn", "in_sp500",
-                                                           "in_sp400", "in_sp600"]))
+                                                           "in_sp400", "in_sp600"] + list(extra)))
     load_from = (pd.Timestamp(args.start) - pd.Timedelta(days=LOAD_PAD_DAYS)) if args.start else None
     try:
         df = datastore.load_panel(cols, start=load_from, end=args.end, universe=args.universe,
@@ -269,7 +267,6 @@ def main():
     df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
     codes = df["symbol"].cat.codes.to_numpy() if hasattr(df["symbol"], "cat") else pd.factorize(df["symbol"])[0]
     market = pd.read_parquet(config.MARKET_FILE)
-    spx200 = datastore.load_market(["spx_above200"]).set_index("date")["spx_above200"]
 
     gap, brk = gaps(df, codes)
     br = breadth(df, codes, gap, brk, BREADTH_GAP, args.min_members)
@@ -281,6 +278,21 @@ def main():
     rows = events(df, codes, gap, brk, P, args.min_gap, args.max_gap, args.start, args.end)
     t = day_trades(df, rows, gap, br, spy, args.cost_pct)
     t["index"] = index_of(df, t["row"].to_numpy())
+    return df, codes, market, gap, brk, br, spy, t
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    add_event_flags(parser)
+    parser.add_argument("--sample", type=int, default=0, help="Print N random pick trades to check on a chart")
+    parser.add_argument("--save-trades", type=str, default=None, help="Write every event trade to this CSV")
+    parser.add_argument("--no-log", action="store_true", help="Don't add a row to the research log")
+    args = parser.parse_args()
+    P = collect(args, ["universe"])
+
+    t0 = time.time()
+    df, codes, market, gap, brk, br, spy, t = load_events(args, P)
+    spx200 = datastore.load_market(["spx_above200"]).set_index("date")["spx_above200"]
     every_p = dict(P, size="all")
     wide = day_trades(df, events(df, codes, gap, brk, every_p, args.min_gap, np.inf, args.start, args.end),
                       gap, br, spy, args.cost_pct)
