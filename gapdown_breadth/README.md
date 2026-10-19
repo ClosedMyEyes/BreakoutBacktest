@@ -1,7 +1,7 @@
 # Market-wide gap-downs
 
-**Status: written 2026-10-19, not yet run on the Norgate data.** The holdout stays locked until a rule is
-frozen from the Dev run.
+**Status: the pick failed on Dev (Mark's run, 2026-10-19; below).** `filters.py` looks at where the trades
+lose and at filters on the stock itself; it hasn't been run yet. The holdout stays locked.
 
 A lead from the Stockbot review (section 9 of `stockbot_review/verification/README.md` in the project
 files). Stockbot's gap_fill_large buys a large cap that opened 2.5-5% below its prior close once it turns
@@ -65,3 +65,57 @@ If the pick passes on Dev, the next step is to freeze it and run it once on the 
 (`--universe holdout --unlock-holdout`). A pass there would make it a strategy of its own on daily data,
 and a reason to test a breadth filter for gap_fill_large on the March to October 2026 bars before the bot
 uses one.
+
+## Dev result (Mark's run, 2026-10-19): the pick failed
+
+9,260 days had a breadth reading (1990-01-03 to 2026-10-09, a median 262 members a day); 93.9% of them were
+under 5%. There were 33,582 events on 6,400 days.
+
+- **The pick, 2010 on:** 7,607 trades on 184 days, **-0.11% a trade** after the 0.10% round trip (t -0.48),
+  -0.04% against SPY, positive in 6 of 15 years. The lone days made +0.04%, and SPY itself +0.10% a day on
+  the broad days (t 1.09).
+- **By breadth, 2010 on:** 5-10% -0.04% (1,338 trades), 10-20% +0.71% (1,425, t 2.16), 20-30% -0.60% (674),
+  30%+ -0.33% (4,170). So the 50 crash days (20%+) held 4,844 of the 7,607 trades and lost 0.37% each,
+  while the 5-20% days made +0.35% on 2,763. 2011 and 2025 lost the most; 2020 was about flat (-0.07%).
+- **Before 2010 it worked on any day:** broad days +0.45% (t 2.01), lone days +0.39% (t 7.41), and the crash
+  days were the best (+0.50% on 4,508 trades). By 5-year block the broad days made +0.58%, +1.20% and +0.74%
+  from 1990 to 2004, then -0.06% (2005-09), -0.42%, +0.24%, -0.00% and -0.32% (2025-26); the lone days
+  +0.59%, +0.34%, +0.18% and +0.48% to 2009, then +0.10%, -0.04%, -0.05% and +0.27%. Buying gap-downs at
+  the open was an edge before 2010 on any day, and has mostly faded since: not a market-breadth effect.
+
+"Skip the crash days" would turn 2010 on positive, but it was picked after seeing the result, it was the
+best rule before 2010, and the locked half can't check it: it holds other companies on the same days. So it
+isn't taken.
+
+## Part 2: where it loses, and filters on the stock
+
+`filters.py` uses the same events, breadth and costs (and flags). It prints:
+
+1. Broad and lone days by year before 2010 (`breadth_events.py` printed 2010 on), for 2008 and 2000-02.
+2. The 15 worst and 15 best days over all years, by the day's events' ret added up, with the day's breadth
+   and SPY's gap and open-to-close; then 2010 on without the 10 worst and without the 10 best days.
+3. Every event from 2010 split by four things about the stock, all known at the open, with broad and lone
+   days side by side, ret by 5-year block, and ret before 2010:
+   - **Trend:** the prior close above or below the stock's 200-day, and its 50-day, average. A gap-down in
+     a rising stock may get bought back; in a falling one it may keep going.
+   - **Gap below SPY's:** how many points further the stock gapped down than SPY that morning (under 1, 1 to
+     2.5, 2.5+). A gap close to the market's is mostly the market's move; one far below it is mostly the
+     stock's own news, which tends to keep going.
+   - **Gap over its 50-day ATR** (as % of the prior close): under 1x, 1x to 2x, 2x+. 3% is a shock for a
+     steady stock and an ordinary day for a jumpy one.
+   - **The day before:** fell 2%+, -2% to +2%, rose 2%+. A second fall in a row may be panic that turns, or
+     a slide that carries on.
+
+**The bar, set before the first run:** a bucket is worth one run on the locked half if, on all days from 2010,
+its ret is above 0 with a month-clustered t above 2, and above 0 in each 5-year block from 2010. There are 13
+buckets, so one can clear t 2 by luck, and the locked half shares the days, so even a pass there would need
+the forward test on the March to October 2026 minute bars before the bot uses it. A rule about which days to
+trade (breadth, SPY's gap) stays context. Each run adds a row to the research log with 13 combinations.
+
+```
+python gapdown_breadth/filters.py
+python gapdown_breadth/filters.py --save-trades gapdown_filters.csv
+```
+
+`--save-trades` writes every event with its filter values (`vs200`, `vs50`, `below_spy`, `gap_atr`,
+`day_before`, `spy_gap`), so other splits can be read off the file without another run.
