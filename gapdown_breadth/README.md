@@ -1,7 +1,7 @@
 # Market-wide gap-downs
 
-**Status: the pick failed on Dev (Mark's run, 2026-10-19; below).** `filters.py` looks at where the trades
-lose and at filters on the stock itself; it hasn't been run yet. The holdout stays locked.
+**Status: closed.** The pick failed on Dev (Mark's run, 2026-10-19), and so did the filters on the stock:
+the one that cleared the bar rides on five crash days (Part 2 result, below). The holdout stays locked.
 
 A lead from the Stockbot review (section 9 of `stockbot_review/verification/README.md` in the project
 files). Stockbot's gap_fill_large buys a large cap that opened 2.5-5% below its prior close once it turns
@@ -119,3 +119,33 @@ python gapdown_breadth/filters.py --save-trades gapdown_filters.csv
 
 `--save-trades` writes every event with its filter values (`vs200`, `vs50`, `below_spy`, `gap_atr`,
 `day_before`, `spy_gap`), so other splits can be read off the file without another run.
+
+## Part 2 result (Mark's run, 2026-10-19): closed
+
+All 33,582 events, 13,317 of them from 2010 (-0.05% a trade after costs).
+
+- **Where it loses:** the worst days are crash mornings: 2008-12-01, 2008-10-15, 2011-08-08, 2020-03-11,
+  2011-08-18, then more of late 2008 and March 2009, and 2025-04-04. From 2010, leaving out the 10 worst days
+  gives +0.22% a trade, but leaving out the 10 best gives -0.33%, and the best are the same kind of day
+  (2020-06-15, 2022-02-24, 2010-05-25, 2011-09-06; 2025-04-07 came one session after 2025-04-04). Nothing
+  known at the open says which way a crash morning goes.
+- **The filters, 2010 on:** 12 of the 13 buckets failed the bar. Above the 200-day +0.06% (t 0.72), below
+  -0.14%; above the 50-day -0.08%, below -0.02%; gap below SPY's under 1 point -0.29%, 1 to 2.5 -0.00%, 2.5+
+  +0.08% (t 1.30); gap over the 50-day ATR under 1x -0.02%, 1x to 2x -0.12%, 2x+ +0.11% (t 1.03); the day
+  before -2% to +2% -0.19%, rose 2%+ -0.28%.
+- **The day before fell 2%+ cleared it:** 3,472 trades, +0.43% a trade (t 2.25), above 0 in every 5-year
+  block, +0.70% before 2010. It isn't taken to the locked half, because it is a few days and not the stock:
+  - Averaging each day's trades first, then the 730 days, it makes +0.00% a day (t 0.01).
+  - Its 5 best days (477 trades) make 1,419 of its 1,503 percentage points. Without them it makes +0.03% a
+    trade, and without the best 10 -0.23%. 437 of its days have one trade, and those average -0.24%.
+  - Every trade at 1% of the account would have made +15.7% over 16.7 years, +0.6% without the 5 best days.
+  - The locked half holds other companies on the same days, so it would see the same crash mornings and
+    can't tell a day effect from a stock effect.
+  - Before 2010 every gap-down made money (the other events +0.32% a trade), so that isn't support either.
+
+The bar counted trades. For events that pile up on a few days, a bar should also ask for a positive result
+averaged by day and without the 5 best days.
+
+The numbers come from Mark's `--save-trades` file. The breakdown by day, by finer steps of the day before, by
+breadth and by year is in the project files (`gapdown_breadth/fell2_check.md`, made by `fell2_dig.py` from
+that file).
