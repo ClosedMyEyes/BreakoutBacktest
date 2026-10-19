@@ -332,6 +332,7 @@ folder. Run each command from the top folder, as written in this README. The dat
 | `crash_short/` | Short crashes that follow a run-up: the event study, then real trades with stops |
 | `crash_bounce/` | Short the relief rally after a crash, at a line known at the crash close; its nightly scanner and TradingView indicator |
 | `lockup_short/` | Lock-up expiry: new listings around the 180-day lock-up |
+| `gapdown_breadth/` | Market-wide gap-downs: large caps that gap down with the market, bought at the open and sold at the close |
 | `tests/` | Tests for the shared code, the pipeline and the spike short |
 
 | File | Job |
